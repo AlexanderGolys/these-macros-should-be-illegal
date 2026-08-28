@@ -12,7 +12,7 @@ use proc_macro::TokenStream;
 #[rustfmt::skip] #[proc_macro]
 pub fn literally_literal_string(input: TokenStream) -> TokenStream { literally_literal_string_impl(input.into()).into() }
 
-/// Turns each enum variant's string discriminant into a generated accessor.
+#[doc = include_str!("../docs/str_disc.md")]
 #[rustfmt::skip] #[proc_macro_attribute]
 pub fn str_disc(arguments: TokenStream, item: TokenStream) -> TokenStream { str_disc_impl(arguments.into(), item.into()).into() }
 

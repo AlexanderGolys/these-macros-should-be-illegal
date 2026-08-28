@@ -15,10 +15,22 @@ struct Arguments {
     method: Ident,
     /// Return representation selected by the attribute arguments.
     output: Output,
+    /// Behavior inferred or requested for variants without descriptions.
+    missing: MissingDescription,
 }
 
-/// Supported return representations for generated accessors.
-enum Output {
+/// Return representation for a generated accessor.
+#[derive(Clone, Copy)]
+struct Output {
+    /// Non-optional value returned when a description exists.
+    base: BaseOutput,
+    /// Whether the base value is wrapped in `Option`.
+    optional: bool,
+}
+
+/// Supported non-optional return representations for generated accessors.
+#[derive(Clone, Copy)]
+enum BaseOutput {
     /// Borrowed static text, retaining `const fn` when every description is fixed.
     StaticStr,
     /// An owned standard-library string.
@@ -27,27 +39,74 @@ enum Output {
     Str,
 }
 
+/// Behavior for variants with neither a discriminant nor an inferred text field.
+#[derive(Clone, Copy)]
+enum MissingDescription {
+    /// Infer an optional accessor and return `None` for the variant.
+    None,
+    /// Use the variant identifier's spelling as a fixed description.
+    Stringify,
+}
+
 /// Source of a variant's description.
 enum VariantDescription {
     /// A fixed string taken from the variant discriminant.
     Fixed(LitStr),
-    /// The runtime value of the variant's single `String` field.
-    Dynamic,
+    /// Runtime text selected from one of the variant's fields.
+    Dynamic(DynamicField),
+    /// A variant intentionally lacking a description in optional mode.
+    Missing,
+}
+
+/// Pattern and text representation for one selected dynamic field.
+struct DynamicField {
+    /// Match pattern binding the selected field as `value`.
+    pattern: TokenStream,
+    /// Whether the selected field owns or borrows its text.
+    text: TextSource,
+}
+
+/// Supported field types for dynamic descriptions.
+enum TextSource {
+    /// An owned, unqualified `String` field.
+    String,
+    /// An immutable `&str` field with any explicit or elided lifetime.
+    Str,
 }
 
 /// Parses the `str_disc` attribute's arguments.
 impl Parse for Arguments {
-    /// Parses an accessor name followed by an optional supported return type.
+    /// Parses a method name, optional ownership type, and optional missing-value override.
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let method = Ident::parse_any(input)?;
-        let output = if input.is_empty() {
-            Output::StaticStr
-        } else {
+        let output = if input.peek(Token![:]) {
             input.parse::<Token![:]>()?;
             parse_output(input.parse()?)?
+        } else {
+            Output::new(BaseOutput::StaticStr)
         };
+        let missing = if input.peek(Token![=]) {
+            input.parse::<Token![=]>()?;
+            let behavior = Ident::parse_any(input)?;
+            if behavior != "stringify" {
+                return Err(Error::new(
+                    behavior.span(),
+                    "expected `stringify` as the missing-description behavior",
+                ));
+            }
+            MissingDescription::Stringify
+        } else {
+            MissingDescription::None
+        };
+        if !input.is_empty() {
+            return Err(input.error("unexpected tokens after `str_disc` arguments"));
+        }
 
-        Ok(Self { method, output })
+        Ok(Self {
+            method,
+            output,
+            missing,
+        })
     }
 }
 
@@ -62,52 +121,37 @@ pub(crate) fn str_disc(arguments: TokenStream, item: TokenStream) -> TokenStream
 
 /// Classifies an explicitly requested accessor return type.
 fn parse_output(output: Type) -> syn::Result<Output> {
-    match &output {
-        Type::Path(output) if output.qself.is_none() && output.path.is_ident("String") => {
-            Ok(Output::String)
-        }
-        Type::Reference(output)
-            if output.lifetime.is_none()
-                && output.mutability.is_none()
-                && matches!(output.elem.as_ref(), Type::Path(path) if path.qself.is_none() && path.path.is_ident("str")) =>
-        {
-            Ok(Output::Str)
-        }
-        _ => Err(Error::new_spanned(
-            output,
-            "expected `String` or `&str` as the accessor return type",
-        )),
+    if is_string_type(&output) {
+        return Ok(Output::new(BaseOutput::String));
     }
+    if is_elided_str_reference(&output) {
+        return Ok(Output::new(BaseOutput::Str));
+    }
+    Err(Error::new_spanned(
+        output,
+        "expected `String` or `&str` as the accessor return type; optionality is inferred from the variants",
+    ))
 }
 
 /// Removes string discriminants and emits the matching accessor implementation.
 fn expand(arguments: Arguments, mut item: ItemEnum) -> syn::Result<TokenStream> {
-    let Arguments { method, output } = arguments;
+    let Arguments {
+        method,
+        output,
+        missing,
+    } = arguments;
     let mut variants = Vec::with_capacity(item.variants.len());
 
     for variant in &mut item.variants {
-        let description = match variant.discriminant.take() {
-            Some((_, expression)) => {
-                let Expr::Lit(ExprLit {
-                    lit: Lit::Str(description),
-                    ..
-                }) = expression
-                else {
-                    return Err(Error::new_spanned(
-                        expression,
-                        "string discriminant must be a string literal",
-                    ));
-                };
-                VariantDescription::Fixed(description)
-            }
-            None if is_dynamic_string_variant(&variant.fields) => VariantDescription::Dynamic,
-            None => {
-                return Err(Error::new_spanned(
-                    &variant.fields,
-                    "a variant without a string discriminant must have exactly one `String` field",
-                ));
-            }
-        };
+        let description = classify_description(
+            &variant.ident,
+            &variant.fields,
+            variant
+                .discriminant
+                .take()
+                .map(|(_, expression)| expression),
+            missing,
+        )?;
 
         variants.push((
             variant.ident.clone(),
@@ -117,60 +161,78 @@ fn expand(arguments: Arguments, mut item: ItemEnum) -> syn::Result<TokenStream> 
         ));
     }
 
-    let borrowed_arms: Vec<_> = variants
-        .iter()
-        .map(|(ident, attrs, fields, description)| {
-            let attrs = arm_attrs(attrs);
-            match description {
-                VariantDescription::Fixed(description) => {
-                    let pattern = variant_pattern(ident, fields);
-                    quote!(#(#attrs)* #pattern => #description)
-                }
-                VariantDescription::Dynamic => {
-                    quote!(#(#attrs)* Self::#ident(value) => value.as_str())
-                }
-            }
-        })
-        .collect();
-    let owned_arms: Vec<_> = variants
-        .iter()
-        .map(|(ident, attrs, fields, description)| {
-            let attrs = arm_attrs(attrs);
-            match description {
-                VariantDescription::Fixed(description) => {
-                    let pattern = variant_pattern(ident, fields);
-                    quote!(#(#attrs)* #pattern => ::std::string::String::from(#description))
-                }
-                VariantDescription::Dynamic => {
-                    quote!(#(#attrs)* Self::#ident(value) => value.clone())
-                }
-            }
-        })
-        .collect();
     let has_dynamic_description = variants
         .iter()
-        .any(|(_, _, _, description)| matches!(description, VariantDescription::Dynamic));
+        .any(|(_, _, _, description)| matches!(description, VariantDescription::Dynamic(_)));
+    let has_missing_description = variants
+        .iter()
+        .any(|(_, _, _, description)| matches!(description, VariantDescription::Missing));
+    let output = output.with_inferred_shape(has_dynamic_description, has_missing_description);
+    let arms: Vec<_> = variants
+        .iter()
+        .map(|(ident, attrs, fields, description)| {
+            accessor_arm(
+                ident,
+                attrs,
+                fields,
+                description,
+                output.is_owned(),
+                output.is_optional(),
+            )
+        })
+        .collect();
     let ident = &item.ident;
     let (impl_generics, type_generics, where_clause) = item.generics.split_for_impl();
-    let method = match output {
-        Output::StaticStr if !has_dynamic_description => quote! {
+    let method_documentation = LitStr::new(
+        &format!("Returns this variant's `{method}` value generated by `str_disc`."),
+        method.span(),
+    );
+    let method = match (output.base, output.optional) {
+        (BaseOutput::StaticStr, false) => quote! {
+            #[doc = #method_documentation]
             pub const fn #method(&self) -> &'static str {
                 match self {
-                    #(#borrowed_arms),*
+                    #(#arms),*
                 }
             }
         },
-        Output::StaticStr | Output::Str => quote! {
+        (BaseOutput::StaticStr, true) => quote! {
+            #[doc = #method_documentation]
+            pub const fn #method(&self) -> ::core::option::Option<&'static str> {
+                match self {
+                    #(#arms),*
+                }
+            }
+        },
+        (BaseOutput::Str, false) => quote! {
+            #[doc = #method_documentation]
             pub fn #method(&self) -> &str {
                 match self {
-                    #(#borrowed_arms),*
+                    #(#arms),*
                 }
             }
         },
-        Output::String => quote! {
+        (BaseOutput::Str, true) => quote! {
+            #[doc = #method_documentation]
+            pub fn #method(&self) -> ::core::option::Option<&str> {
+                match self {
+                    #(#arms),*
+                }
+            }
+        },
+        (BaseOutput::String, false) => quote! {
+            #[doc = #method_documentation]
             pub fn #method(&self) -> ::std::string::String {
                 match self {
-                    #(#owned_arms),*
+                    #(#arms),*
+                }
+            }
+        },
+        (BaseOutput::String, true) => quote! {
+            #[doc = #method_documentation]
+            pub fn #method(&self) -> ::core::option::Option<::std::string::String> {
+                match self {
+                    #(#arms),*
                 }
             }
         },
@@ -184,16 +246,257 @@ fn expand(arguments: Arguments, mut item: ItemEnum) -> syn::Result<TokenStream> 
     })
 }
 
-/// Reports whether fields are exactly one unnamed, unqualified `String`.
-fn is_dynamic_string_variant(fields: &Fields) -> bool {
-    let Fields::Unnamed(fields) = fields else {
-        return false;
-    };
-    let Some(field) = fields.unnamed.first().filter(|_| fields.unnamed.len() == 1) else {
-        return false;
+/// Classifies one variant's fixed, selected, inferred, or missing description.
+fn classify_description(
+    variant: &Ident,
+    fields: &Fields,
+    discriminant: Option<Expr>,
+    missing: MissingDescription,
+) -> syn::Result<VariantDescription> {
+    let Some(expression) = discriminant else {
+        if let Some(dynamic) = infer_dynamic_field(variant, fields) {
+            return Ok(VariantDescription::Dynamic(dynamic));
+        }
+        return Ok(match missing {
+            MissingDescription::None => VariantDescription::Missing,
+            MissingDescription::Stringify => {
+                VariantDescription::Fixed(LitStr::new(&variant.unraw().to_string(), variant.span()))
+            }
+        });
     };
 
-    matches!(&field.ty, Type::Path(ty) if ty.qself.is_none() && ty.path.is_ident("String"))
+    match expression {
+        Expr::Lit(ExprLit {
+            lit: Lit::Str(description),
+            ..
+        }) => Ok(VariantDescription::Fixed(description)),
+        Expr::Lit(ExprLit {
+            lit: Lit::Int(index),
+            ..
+        }) => select_unnamed_field(variant, fields, index.base10_parse()?, &index)
+            .map(VariantDescription::Dynamic),
+        Expr::Path(path) if path.qself.is_none() && path.path.get_ident().is_some() => {
+            let field = path.path.get_ident().expect("checked above");
+            select_named_field(variant, fields, field).map(VariantDescription::Dynamic)
+        }
+        expression => Err(Error::new_spanned(
+            expression,
+            "expected a string literal, tuple field index, or named field as the variant description",
+        )),
+    }
+}
+
+/// Infers a dynamic description from a single `String` or `&str` field.
+fn infer_dynamic_field(variant: &Ident, fields: &Fields) -> Option<DynamicField> {
+    match fields {
+        Fields::Unnamed(fields) if fields.unnamed.len() == 1 => {
+            let field = fields.unnamed.first()?;
+            Some(DynamicField {
+                pattern: quote!(Self::#variant(value)),
+                text: text_source(&field.ty)?,
+            })
+        }
+        Fields::Named(fields) if fields.named.len() == 1 => {
+            let field = fields.named.first()?;
+            let field_ident = field.ident.as_ref()?;
+            Some(DynamicField {
+                pattern: quote!(Self::#variant { #field_ident: value }),
+                text: text_source(&field.ty)?,
+            })
+        }
+        Fields::Unit | Fields::Unnamed(_) | Fields::Named(_) => None,
+    }
+}
+
+/// Selects and binds an unnamed string field by its zero-based index.
+fn select_unnamed_field(
+    variant: &Ident,
+    fields: &Fields,
+    index: usize,
+    selector: &impl quote::ToTokens,
+) -> syn::Result<DynamicField> {
+    let Fields::Unnamed(fields) = fields else {
+        return Err(Error::new_spanned(
+            selector,
+            "an integer description selector requires a tuple-like variant",
+        ));
+    };
+    let field = fields.unnamed.iter().nth(index).ok_or_else(|| {
+        Error::new_spanned(
+            selector,
+            format!("description field index {index} is out of bounds"),
+        )
+    })?;
+    let text = text_source(&field.ty).ok_or_else(|| unsupported_field_type(&field.ty))?;
+    let patterns = fields.unnamed.iter().enumerate().map(|(field_index, _)| {
+        if field_index == index {
+            quote!(value)
+        } else {
+            quote!(_)
+        }
+    });
+
+    Ok(DynamicField {
+        pattern: quote!(Self::#variant(#(#patterns),*)),
+        text,
+    })
+}
+
+/// Selects and binds a named string field by identifier.
+fn select_named_field(
+    variant: &Ident,
+    fields: &Fields,
+    selector: &Ident,
+) -> syn::Result<DynamicField> {
+    let Fields::Named(fields) = fields else {
+        return Err(Error::new_spanned(
+            selector,
+            "an identifier description selector requires a struct-like variant",
+        ));
+    };
+    let field = fields
+        .named
+        .iter()
+        .find(|field| field.ident.as_ref() == Some(selector))
+        .ok_or_else(|| {
+            Error::new_spanned(selector, format!("variant has no field named `{selector}`"))
+        })?;
+    let text = text_source(&field.ty).ok_or_else(|| unsupported_field_type(&field.ty))?;
+
+    Ok(DynamicField {
+        pattern: quote!(Self::#variant { #selector: value, .. }),
+        text,
+    })
+}
+
+/// Returns an error for a selected field that cannot supply string text.
+fn unsupported_field_type(ty: &Type) -> Error {
+    Error::new_spanned(
+        ty,
+        "a selected description field must have type `String` or `&str`",
+    )
+}
+
+/// Classifies a dynamic field as owned or borrowed string text.
+fn text_source(ty: &Type) -> Option<TextSource> {
+    if is_string_type(ty) {
+        Some(TextSource::String)
+    } else if is_str_reference(ty) {
+        Some(TextSource::Str)
+    } else {
+        None
+    }
+}
+
+/// Reports whether a type is an unqualified `String`.
+fn is_string_type(ty: &Type) -> bool {
+    matches!(ty, Type::Path(ty) if ty.qself.is_none() && ty.path.is_ident("String"))
+}
+
+/// Reports whether a type is an immutable `str` reference with any lifetime.
+fn is_str_reference(ty: &Type) -> bool {
+    matches!(
+        ty,
+        Type::Reference(reference)
+            if reference.mutability.is_none()
+                && matches!(reference.elem.as_ref(), Type::Path(path) if path.qself.is_none() && path.path.is_ident("str"))
+    )
+}
+
+/// Reports whether a type is an immutable lifetime-elided `&str`.
+fn is_elided_str_reference(ty: &Type) -> bool {
+    matches!(ty, Type::Reference(reference) if reference.lifetime.is_none()) && is_str_reference(ty)
+}
+
+/// Builds one match arm for the requested owned, borrowed, or optional output.
+fn accessor_arm(
+    ident: &Ident,
+    attrs: &[Attribute],
+    fields: &Fields,
+    description: &VariantDescription,
+    owned: bool,
+    optional: bool,
+) -> TokenStream {
+    let attrs = conditional_attrs(attrs);
+    let (pattern, expression) = match description {
+        VariantDescription::Fixed(description) => {
+            let value = if owned {
+                quote!(::std::string::String::from(#description))
+            } else {
+                quote!(#description)
+            };
+            (
+                variant_pattern(ident, fields),
+                optional_value(value, optional),
+            )
+        }
+        VariantDescription::Dynamic(dynamic) => {
+            let value = dynamic.value(owned);
+            (dynamic.pattern.clone(), optional_value(value, optional))
+        }
+        VariantDescription::Missing => (
+            variant_pattern(ident, fields),
+            quote!(::core::option::Option::None),
+        ),
+    };
+
+    quote!(#(#attrs)* #pattern => #expression)
+}
+
+/// Wraps a present description in `Some` when optional output was requested.
+fn optional_value(value: TokenStream, optional: bool) -> TokenStream {
+    if optional {
+        quote!(::core::option::Option::Some(#value))
+    } else {
+        value
+    }
+}
+
+/// Provides the expression reading a selected dynamic field.
+impl DynamicField {
+    /// Borrows or owns the bound `value` according to the accessor output.
+    fn value(&self, owned: bool) -> TokenStream {
+        match (&self.text, owned) {
+            (TextSource::String, false) => quote!(value.as_str()),
+            (TextSource::String, true) => quote!(value.clone()),
+            (TextSource::Str, false) => quote!(*value),
+            (TextSource::Str, true) => quote!(::std::string::String::from(*value)),
+        }
+    }
+}
+
+/// Reports and infers output shape during expansion.
+impl Output {
+    /// Creates a required output with the selected base representation.
+    const fn new(base: BaseOutput) -> Self {
+        Self {
+            base,
+            optional: false,
+        }
+    }
+
+    /// Infers borrowing and optionality independently from the variant descriptions.
+    fn with_inferred_shape(
+        mut self,
+        has_dynamic_description: bool,
+        has_missing_description: bool,
+    ) -> Self {
+        if has_dynamic_description && matches!(self.base, BaseOutput::StaticStr) {
+            self.base = BaseOutput::Str;
+        }
+        self.optional |= has_missing_description;
+        self
+    }
+
+    /// Reports whether the accessor allocates an owned `String` when present.
+    fn is_owned(self) -> bool {
+        matches!(self.base, BaseOutput::String)
+    }
+
+    /// Reports whether variants may omit descriptions.
+    fn is_optional(self) -> bool {
+        self.optional
+    }
 }
 
 /// Builds a non-binding match pattern for a fixed-description variant.
@@ -205,8 +508,8 @@ fn variant_pattern(ident: &Ident, fields: &Fields) -> TokenStream {
     }
 }
 
-/// Retains conditional-compilation attributes needed on generated match arms.
-fn arm_attrs(attrs: &[Attribute]) -> impl Iterator<Item = &Attribute> {
+/// Retains attributes that can control whether the corresponding variant exists.
+fn conditional_attrs(attrs: &[Attribute]) -> impl Iterator<Item = &Attribute> {
     attrs.iter().filter(|attribute| {
         attribute.path().is_ident("cfg") || attribute.path().is_ident("cfg_attr")
     })

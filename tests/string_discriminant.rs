@@ -48,7 +48,61 @@ enum MixedDescription {
     Dynamic(String),
 }
 
+#[str_disc(description)]
+enum SelectedDescription<'a> {
+    Tuple(String, String) = 1,
+    Struct { a: String, b: String } = a,
+    Borrowed(&'a str),
+    BorrowedTuple(u8, &'a str) = 1,
+    BorrowedStruct { code: u8, text: &'a str } = text,
+}
+
+#[str_disc(description)]
+enum LifetimeDescription<'a, 'b, 'c> {
+    A(&'a str),
+    B(&'b str),
+    C(&'c str) = "a",
+}
+
+#[str_disc(description)]
+enum OptionalDescription<'a> {
+    Fixed = "fixed",
+    Dynamic(String),
+    Borrowed(&'a str),
+    Missing,
+    Payload(u8),
+}
+
+/// Descriptions that are either compile-time constants or absent.
+#[str_disc(description)]
+enum OptionalFixedDescription {
+    Fixed = "fixed",
+    Missing,
+}
+
+#[str_disc(description: String)]
+enum OptionalOwnedDescription {
+    Fixed = "owned fixed",
+    Dynamic(String),
+    Missing,
+}
+
+#[str_disc(description = stringify)]
+enum StringifiedDescription {
+    Fixed = "fixed override",
+    Missing,
+    Payload(u8),
+}
+
+const STRINGIFIED_MISSING: &str = StringifiedDescription::Missing.description();
+
 const QUIT_DESCRIPTION: &str = Action::Quit.description();
+
+/// A present optional description evaluated in a constant context.
+const OPTIONAL_FIXED_DESCRIPTION: Option<&str> = OptionalFixedDescription::Fixed.description();
+
+/// An absent optional description evaluated in a constant context.
+const OPTIONAL_MISSING_DESCRIPTION: Option<&str> = OptionalFixedDescription::Missing.description();
 
 #[test]
 fn generates_string_discriminant_accessor() {
@@ -120,4 +174,100 @@ fn preserves_payloads_and_borrows_dynamic_descriptions() {
     let dynamic = MixedDescription::Dynamic("dynamic description".to_owned());
     assert_eq!(dynamic.description(), "dynamic description");
     assert_eq!(dynamic.description(), "dynamic description");
+}
+
+/// Selects tuple and named fields while borrowing explicit-lifetime strings.
+#[test]
+fn selects_dynamic_fields_and_preserves_enum_lifetimes() {
+    let tuple = SelectedDescription::Tuple("first".to_owned(), "second".to_owned());
+    assert_eq!(tuple.description(), "second");
+    assert!(matches!(
+        &tuple,
+        SelectedDescription::Tuple(first, _) if first == "first"
+    ));
+
+    let structure = SelectedDescription::Struct {
+        a: "selected".to_owned(),
+        b: "ignored".to_owned(),
+    };
+    assert_eq!(structure.description(), "selected");
+    assert!(matches!(
+        &structure,
+        SelectedDescription::Struct { b, .. } if b == "ignored"
+    ));
+
+    let source = String::from("borrowed");
+    assert_eq!(
+        SelectedDescription::Borrowed(&source).description(),
+        "borrowed"
+    );
+    let borrowed_tuple = SelectedDescription::BorrowedTuple(7, &source);
+    assert_eq!(borrowed_tuple.description(), "borrowed");
+    assert!(matches!(
+        borrowed_tuple,
+        SelectedDescription::BorrowedTuple(7, _)
+    ));
+    let borrowed_struct = SelectedDescription::BorrowedStruct {
+        code: 9,
+        text: &source,
+    };
+    assert_eq!(borrowed_struct.description(), "borrowed");
+    assert!(matches!(
+        borrowed_struct,
+        SelectedDescription::BorrowedStruct { code: 9, .. }
+    ));
+}
+
+/// Uses the `&self` borrow as the common lifetime for distinct variant references.
+#[test]
+fn reborrows_distinct_variant_lifetimes_for_the_accessor() {
+    let first = String::from("first");
+    let second = String::from("second");
+    let ignored = String::from("ignored");
+    let a = LifetimeDescription::A(&first);
+    let b = LifetimeDescription::B(&second);
+    let c = LifetimeDescription::C(&ignored);
+
+    assert_eq!(a.description(), "first");
+    assert_eq!(b.description(), "second");
+    assert_eq!(c.description(), "a");
+    assert!(matches!(c, LifetimeDescription::C(value) if value == "ignored"));
+}
+
+/// Returns `None` only for variants without fixed or dynamic descriptions.
+#[test]
+fn supports_optional_borrowed_and_owned_descriptions() {
+    assert_eq!(OPTIONAL_FIXED_DESCRIPTION, Some("fixed"));
+    assert_eq!(OPTIONAL_MISSING_DESCRIPTION, None);
+    assert_eq!(OptionalDescription::Fixed.description(), Some("fixed"));
+    assert_eq!(
+        OptionalDescription::Dynamic("dynamic".to_owned()).description(),
+        Some("dynamic")
+    );
+    assert_eq!(
+        OptionalDescription::Borrowed("borrowed").description(),
+        Some("borrowed")
+    );
+    assert_eq!(OptionalDescription::Missing.description(), None);
+    let payload = OptionalDescription::Payload(7);
+    assert_eq!(payload.description(), None);
+    assert!(matches!(payload, OptionalDescription::Payload(7)));
+
+    assert_eq!(
+        OptionalOwnedDescription::Fixed.description(),
+        Some("owned fixed".to_owned())
+    );
+    let dynamic = OptionalOwnedDescription::Dynamic("owned dynamic".to_owned());
+    assert_eq!(dynamic.description(), Some("owned dynamic".to_owned()));
+    assert_eq!(dynamic.description(), Some("owned dynamic".to_owned()));
+    assert_eq!(OptionalOwnedDescription::Missing.description(), None);
+
+    assert_eq!(
+        StringifiedDescription::Fixed.description(),
+        "fixed override"
+    );
+    assert_eq!(STRINGIFIED_MISSING, "Missing");
+    let payload = StringifiedDescription::Payload(8);
+    assert_eq!(payload.description(), "Payload");
+    assert!(matches!(payload, StringifiedDescription::Payload(8)));
 }

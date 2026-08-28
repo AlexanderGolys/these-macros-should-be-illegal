@@ -95,7 +95,7 @@ pub enum Action {
 
 This becomes a unit-variant enum with
 `pub const fn description(&self) -> &'static str`. Select an allocating
-`String` or lifetime-elided `&str` accessor explicitly when desired:
+`String` accessor explicitly when desired; optionality is inferred separately:
 
 ```rust
 #[str_disc(description: String)]
@@ -108,21 +108,43 @@ enum BorrowedDescription { Example = "borrowed" }
 Those typed forms generate ordinary, non-`const` methods.
 
 Variants may retain ordinary tuple or struct payloads alongside a fixed
-description. A variant with no discriminant must contain exactly one `String`;
-its value becomes the description:
+description. A sole `String` or `&str` field becomes the dynamic description.
+For variants with multiple fields, an integer selects a zero-based tuple field
+and an identifier selects a named field:
 
 ```rust
 #[str_disc(description)]
-enum Error {
+enum Error<'a> {
     Io(std::io::Error) = "I/O error",
-    Parse { line: usize } = "parse error",
+    Pair(String, String) = 1,
+    Context { primary: &'a str, secondary: &'a str } = primary,
     Custom(String),
 }
 ```
 
-When an enum contains a dynamic description, the default accessor is an
-ordinary `fn description(&self) -> &str`. An all-fixed enum retains its
-`const fn -> &'static str` accessor.
+The return type follows the complete enum shape:
+
+- all fixed descriptions produce `const fn -> &'static str`;
+- any dynamic description produces `fn -> &str`;
+- any variant without a fixed or dynamic description changes the return to
+  `Option<&str>`; when every present description is fixed, this remains a
+  `const fn` returning `Option<&'static str>`;
+- `: String` changes those corresponding borrowed forms to `String` or
+  `Option<String>`.
+
+Missing descriptions can instead use their variant names:
+
+```rust
+#[str_disc(description = stringify)]
+enum State {
+    Explicit = "custom spelling",
+    Generated,
+}
+```
+
+Here `State::Generated.description()` returns `"Generated"`. Lifetimes on the
+enum and selected `&'a str` fields are preserved; the accessor returns a
+reborrow tied to `&self`.
 
 ## Nested algebraic declarations
 
