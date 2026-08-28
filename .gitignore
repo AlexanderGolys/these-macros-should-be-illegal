@@ -1,0 +1,28 @@
+# Cargo build output
+/target/
+
+# Rust tooling backups and profiling output
+**/*.rs.bk
+*.profraw
+*.profdata
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Editors and operating systems
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+AGENTS.md
+TODO.md
+BUGS.md
+.agents/
+.ai/
+.codex/
+.editorconfig
+.gitattributes
