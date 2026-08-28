@@ -21,5 +21,5 @@ pub(super) use excluded_macros::excluded_macros as excluded_macros_impl;
 pub(super) use expand::expand as expand_impl;
 /// Rewrites the extended owned-string syntax.
 pub(super) use literally_literal_string::literally_literal_string as literally_literal_string_impl;
-/// Lowers one nested struct or enum declaration.
+/// Lowers one nested struct, tuple struct, or enum declaration.
 pub(super) use strutuct::strutuct as strutuct_impl;

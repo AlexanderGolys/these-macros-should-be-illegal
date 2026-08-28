@@ -39,8 +39,43 @@ strutuct! {
 }
 
 strutuct! {
+    Product
+    Pair(String, u8)
+}
+
+strutuct! {
     Outer
     Middle { Inner { Leaf { Done(String) } } }
+}
+
+strutuct! {
+    TypedChoices
+    Named(NamedPayload) { A, B }
+    Generated { A, B }
+    (ImplicitPayload) { A, B }
+}
+
+strutuct! {
+    RootTuple
+    (String, u8)
+}
+
+strutuct! {
+    TuplePayloads
+    Auto { (String, u8) }
+    Explicit(ExplicitPair) { (String, u8) }
+    (ImplicitPair) { (String, u8) }
+}
+
+strutuct! {
+    #[strutuct(product_variants = false)]
+    RustVariants
+    Pair(String, u8)
+    Struct { x: String, y: u8 }
+    #[strutuct(product_variants = true)]
+    Packed(String, u8)
+    #[strutuct(product_variants = true)]
+    Generated { x: String, y: u8 }
 }
 
 /// Verifies that nested declarations are emitted before their parent struct.
@@ -59,12 +94,15 @@ fn composes_automatic_constructors_through_nested_enums() {
     let postfix = Expr!(Unary::Post(2));
     let binary = Expr!(Bin(3));
 
-    assert!(matches!(prefix, Expr::ExprUnary(Unary::UnaryPref(Pref(1)))));
+    assert!(matches!(
+        prefix,
+        Expr::Unary(ExprUnary::PrefExprUnary(Pref(1)))
+    ));
     assert!(matches!(
         postfix,
-        Expr::ExprUnary(Unary::UnaryPost(Post(2)))
+        Expr::Unary(ExprUnary::PostExprUnary(Post(2)))
     ));
-    assert!(matches!(binary, Expr::ExprBin(Bin(3))));
+    assert!(matches!(binary, Expr::BinExpr(Bin(3))));
 }
 
 /// Verifies that explicitly named Rust-like variants retain their constructors.
@@ -75,6 +113,14 @@ fn leaves_explicit_enum_constructors_ordinary() {
 
     assert!(matches!(literal, Expr::LitStr(value) if value == "text"));
     assert!(matches!(null, Expr::Null));
+}
+
+/// Packs a multi-field variant into one tuple product.
+#[test]
+fn packs_tuple_like_variant_products() {
+    let pair = Product!(Pair("left".to_owned(), 7));
+
+    assert!(matches!(pair, Product::Pair((value, 7)) if value == "left"));
 }
 
 /// Verifies nested structs as variants and both postfix type transformations.
@@ -90,7 +136,7 @@ fn constructs_nested_struct_variants_and_postfix_types() {
 
     assert!(matches!(
         message,
-        Message::MessagePayload(Payload { value }) if value == "payload"
+        Message::Payload(MessagePayload { value }) if value == "payload"
     ));
     assert!(matches!(wrapped.optional, Some(Pref(4))));
     assert_eq!(wrapped.boxed.0, 5);
@@ -103,7 +149,84 @@ fn folds_a_complete_nested_enum_path() {
 
     assert!(matches!(
         value,
-        Outer::OuterMiddle(Middle::MiddleInner(Inner::InnerLeaf(Leaf::Done(message))))
+        Outer::Middle(OuterMiddle::Inner(OuterMiddleInner::Leaf(
+            OuterMiddleInnerLeaf::Done(message)
+        )))
             if message == "finished"
+    ));
+}
+
+/// Distinguishes explicit type names, generated type names, and implicit type choices.
+#[test]
+fn names_generated_types_from_parents_and_variants() {
+    let named = TypedChoices!(Named::A);
+    let generated = TypedChoices!(Generated::B);
+    let implicit = TypedChoices!(ImplicitPayload::A);
+
+    assert!(matches!(named, TypedChoices::Named(NamedPayload::A)));
+    assert!(matches!(
+        generated,
+        TypedChoices::Generated(TypedChoicesGenerated::B)
+    ));
+    assert!(matches!(
+        implicit,
+        TypedChoices::ImplicitPayloadTypedChoices(ImplicitPayload::A)
+    ));
+}
+
+/// Generates root and nested tuple products with at least two elements.
+#[test]
+fn generates_tuple_declarations() {
+    let root = RootTuple!("root".to_owned(), 1);
+    let automatic = TuplePayloads!(Auto("auto".to_owned(), 2));
+    let explicit = TuplePayloads!(Explicit("explicit".to_owned(), 3));
+    let implicit = TuplePayloads!(ImplicitPair("implicit".to_owned(), 4));
+
+    assert!(matches!(root, RootTuple(value, 1) if value == "root"));
+    assert!(matches!(
+        automatic,
+        TuplePayloads::Auto(TuplePayloadsAuto(value, 2)) if value == "auto"
+    ));
+    assert!(matches!(
+        explicit,
+        TuplePayloads::Explicit(ExplicitPair(value, 3)) if value == "explicit"
+    ));
+    assert!(matches!(
+        implicit,
+        TuplePayloads::ImplicitPairTuplePayloads(ImplicitPair(value, 4))
+            if value == "implicit"
+    ));
+}
+
+/// Applies a declaration-wide product option and permits rare variant overrides.
+#[test]
+fn configures_product_variants_with_outer_attributes() {
+    let pair = RustVariants!(Pair("pair".to_owned(), 1));
+    let structure = RustVariants!(Struct {
+        x: "struct".to_owned(),
+        y: 2,
+    });
+    let packed = RustVariants!(Packed("packed".to_owned(), 3));
+    let generated = RustVariants!(Generated {
+        x: "generated".to_owned(),
+        y: 4,
+    });
+
+    assert!(matches!(
+        pair,
+        RustVariants::Pair(value, 1) if value == "pair"
+    ));
+    assert!(matches!(
+        structure,
+        RustVariants::Struct { x: value, y: 2 } if value == "struct"
+    ));
+    assert!(matches!(
+        packed,
+        RustVariants::Packed((value, 3)) if value == "packed"
+    ));
+    assert!(matches!(
+        generated,
+        RustVariants::Generated(RustVariantsGenerated { x: value, y: 4 })
+            if value == "generated"
     ));
 }

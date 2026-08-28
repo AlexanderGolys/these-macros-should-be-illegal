@@ -46,8 +46,7 @@ to the borrow of `self`, so an enum may use distinct field lifetimes.
 
 A closure discriminant instead receives every field in declaration order and
 computes the description from the complete product. Any number of arguments,
-including zero, is supported. The macro checks only the arity; Rust checks that
-the closure returns the accessor's selected base type:
+including zero, is supported. Rust checks its arity, body, and return type:
 
 ```rust
 use these_macros_should_be_illegal::discriminated_str;

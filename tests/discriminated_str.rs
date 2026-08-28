@@ -1,6 +1,16 @@
 //! Consumer tests for fixed and dynamic string-discriminant accessors.
 
+extern crate alloc;
+
+use alloc::string;
 use these_macros_should_be_illegal::discriminated_str;
+
+mod some_other_path {
+    //! A deliberately distinct type whose final identifier is `String`.
+
+    /// A non-text type that must not be inferred as the standard string.
+    pub struct String;
+}
 
 #[discriminated_str(description)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -29,10 +39,10 @@ enum Action {
     InsertTab = "insert a tab",
 }
 
-#[discriminated_str(label: String)]
+#[discriminated_str(label: string::String)]
 enum OwnedLabel {
     Value = "owned",
-    Dynamic(String),
+    Dynamic(string::String),
 }
 
 #[discriminated_str(label: &str)]
@@ -51,6 +61,7 @@ enum MixedDescription {
 #[discriminated_str(description)]
 enum SelectedDescription<'a> {
     Tuple(String, String) = 1,
+    NestedTuple((String, String)) = 1,
     Struct { a: String, b: String } = a,
     Borrowed(&'a str),
     BorrowedTuple(u8, &'a str) = 1,
@@ -102,6 +113,17 @@ enum OptionalFixedDescription {
     Missing,
 }
 
+/// An explicitly borrowed fixed accessor remains usable in constants.
+#[discriminated_str(description: &str)]
+enum ExplicitBorrowedFixedDescription {
+    Fixed = "fixed",
+}
+
+#[discriminated_str(description)]
+enum DeliberatelyDistinctString {
+    Value(some_other_path::String),
+}
+
 #[discriminated_str(description: String)]
 enum OptionalOwnedDescription {
     Fixed = "owned fixed",
@@ -116,6 +138,11 @@ enum StringifiedDescription {
     Payload(u8),
 }
 
+#[discriminated_str(description = panic)]
+enum PanickingDescription {
+    Missing,
+}
+
 const STRINGIFIED_MISSING: &str = StringifiedDescription::Missing.description();
 
 const QUIT_DESCRIPTION: &str = Action::Quit.description();
@@ -125,6 +152,10 @@ const OPTIONAL_FIXED_DESCRIPTION: Option<&str> = OptionalFixedDescription::Fixed
 
 /// An absent optional description evaluated in a constant context.
 const OPTIONAL_MISSING_DESCRIPTION: Option<&str> = OptionalFixedDescription::Missing.description();
+
+/// An explicit `&str` does not disable `const` when every value is constant.
+const EXPLICIT_BORROWED_FIXED_DESCRIPTION: &str =
+    ExplicitBorrowedFixedDescription::Fixed.description();
 
 #[test]
 fn generates_discriminated_string_accessor() {
@@ -208,6 +239,13 @@ fn selects_dynamic_fields_and_preserves_enum_lifetimes() {
         SelectedDescription::Tuple(first, _) if first == "first"
     ));
 
+    let nested = SelectedDescription::NestedTuple(("first".to_owned(), "second".to_owned()));
+    assert_eq!(nested.description(), "second");
+    assert!(matches!(
+        &nested,
+        SelectedDescription::NestedTuple((first, _)) if first == "first"
+    ));
+
     let structure = SelectedDescription::Struct {
         a: "selected".to_owned(),
         b: "ignored".to_owned(),
@@ -281,6 +319,7 @@ fn reborrows_distinct_variant_lifetimes_for_the_accessor() {
 /// Returns `None` only for variants without fixed or dynamic descriptions.
 #[test]
 fn supports_optional_borrowed_and_owned_descriptions() {
+    assert_eq!(EXPLICIT_BORROWED_FIXED_DESCRIPTION, "fixed");
     assert_eq!(OPTIONAL_FIXED_DESCRIPTION, Some("fixed"));
     assert_eq!(OPTIONAL_MISSING_DESCRIPTION, None);
     assert_eq!(OptionalDescription::Fixed.description(), Some("fixed"));
@@ -318,4 +357,19 @@ fn supports_optional_borrowed_and_owned_descriptions() {
     let payload = StringifiedDescription::Payload(8);
     assert_eq!(payload.description(), "Payload");
     assert!(matches!(payload, StringifiedDescription::Payload(8)));
+}
+
+/// Does not confuse an unrelated qualified `String` with the standard type.
+#[test]
+fn preserves_deliberately_distinct_string_paths() {
+    let value = DeliberatelyDistinctString::Value(some_other_path::String);
+    assert_eq!(value.description(), None);
+    assert!(matches!(value, DeliberatelyDistinctString::Value(_)));
+}
+
+/// Applies the explicitly requested panic fallback to undescribed variants.
+#[test]
+#[should_panic(expected = "variant `Missing` has no description")]
+fn supports_panicking_missing_descriptions() {
+    PanickingDescription::Missing.description();
 }

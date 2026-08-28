@@ -3,7 +3,7 @@
 use proc_macro2::{Span, TokenStream};
 use quote::{ToTokens, quote};
 use syn::{
-    Error, Ident, LitStr, Token, Type,
+    Attribute, Error, Ident, LitBool, LitStr, Token, Type,
     ext::IdentExt,
     parenthesized,
     parse::{Parse, ParseStream},
@@ -13,20 +13,49 @@ use syn::{
 
 use super::preprocessing::split_config_prefix;
 
+/// One complete invocation with declaration-local lowering options.
+struct Invocation {
+    /// Options consumed from the root declaration's `strutuct` attribute.
+    options: Options,
+    /// Root algebraic declaration.
+    declaration: Declaration,
+}
+
+/// Optional behavior selected for one declaration family.
+#[derive(Clone, Copy)]
+struct Options {
+    /// Whether non-unit enum variants carry one explicit product value.
+    product_variants: bool,
+}
+
+/// Supplies the default algebraic lowering behavior.
+impl Default for Options {
+    /// Enables unary product variants unless the declaration opts out.
+    fn default() -> Self {
+        Self {
+            product_variants: true,
+        }
+    }
+}
+
 /// One declaration inferred to be either a struct or an enum from its members.
 struct Declaration {
+    /// Ordinary Rust attributes forwarded to the generated declaration.
+    attrs: Vec<Attribute>,
     /// Name of the generated Rust type.
     ident: Ident,
     /// Struct fields or enum variants belonging to the declaration.
     body: DeclarationBody,
 }
 
-/// The two declaration shapes accepted by the initial DSL.
+/// The three declaration shapes inferred from the DSL body.
 enum DeclarationBody {
     /// A product type recognized by leading `name: Type` members.
     Struct(Vec<StructField>),
+    /// A tuple struct recognized by one parenthesized product of at least two types.
+    Tuple(Vec<TypeExpression>),
     /// A sum type recognized by variant-shaped members.
-    Enum(Vec<EnumVariant>),
+    Enum(Vec<ParsedEnumVariant>),
 }
 
 /// One public field of a generated struct.
@@ -37,7 +66,17 @@ struct StructField {
     ty: TypeExpression,
 }
 
-/// One variant of a generated enum.
+/// One parsed enum variant together with attributes and a local behavior override.
+struct ParsedEnumVariant {
+    /// Ordinary Rust attributes forwarded to the generated variant.
+    attrs: Vec<Attribute>,
+    /// Per-variant override for unary product lowering.
+    product_variants: Option<bool>,
+    /// Syntactic form of the variant.
+    kind: EnumVariant,
+}
+
+/// Syntactic form of one generated enum variant.
 enum EnumVariant {
     /// A payload whose variant name is derived from its type.
     Implicit(Box<TypeExpression>),
@@ -47,6 +86,13 @@ enum EnumVariant {
         ident: Ident,
         /// Tuple fields, each of which may contain nested declarations.
         fields: Vec<TypeExpression>,
+    },
+    /// A named variant whose payload type is synthesized from its body.
+    Generated {
+        /// Variant name retained verbatim.
+        ident: Ident,
+        /// Generated payload declaration.
+        declaration: Box<Declaration>,
     },
     /// An explicitly named unit variant.
     Unit(Ident),
@@ -81,6 +127,8 @@ enum TypeWrapper {
 enum DeclarationKind {
     /// A generated struct whose constructor macro accepts fields.
     Struct,
+    /// A generated tuple struct whose constructor macro accepts positional fields.
+    Tuple,
     /// A generated enum whose constructor macro selects a variant path.
     Enum,
 }
@@ -109,12 +157,20 @@ struct LoweredType {
     wrapped: bool,
 }
 
-/// Parses one complete root declaration from a `strutuct!` invocation.
-impl Parse for Declaration {
-    /// Parses the root name and infers its body from all remaining input.
+/// Parses one complete `strutuct!` invocation.
+impl Parse for Invocation {
+    /// Parses declaration attributes, options, the root name, and its body.
     fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut attrs = input.call(Attribute::parse_outer)?;
+        let options = Options {
+            product_variants: take_product_variants(&mut attrs)?.unwrap_or(true),
+        };
         let ident = Ident::parse_any(input)?;
-        parse_declaration(ident, input)
+        let declaration = parse_declaration(attrs, ident, input)?;
+        Ok(Self {
+            options,
+            declaration,
+        })
     }
 }
 
@@ -126,7 +182,7 @@ impl Parse for TypeExpression {
             let ident = Ident::parse_any(input)?;
             let content;
             syn::braced!(content in input);
-            TypeBase::Nested(Box::new(parse_declaration(ident, &content)?))
+            TypeBase::Nested(Box::new(parse_declaration(Vec::new(), ident, &content)?))
         } else {
             TypeBase::Rust(Box::new(input.parse()?))
         };
@@ -151,15 +207,53 @@ impl Parse for TypeExpression {
 /// Expands one nested algebraic declaration into ordinary Rust items.
 pub(crate) fn strutuct(input: TokenStream) -> TokenStream {
     let result = split_config_prefix(input)
-        .and_then(|(_, input)| parse2::<Declaration>(input))
-        .and_then(lower_declaration)
+        .and_then(|(_, input)| parse2::<Invocation>(input))
+        .and_then(|invocation| lower_declaration(invocation.declaration, invocation.options))
         .map(|declaration| declaration.items.into_iter().collect());
 
     result.unwrap_or_else(Error::into_compile_error)
 }
 
+/// Consumes `strutuct` configuration attributes and retains ordinary Rust attributes.
+fn take_product_variants(attrs: &mut Vec<Attribute>) -> syn::Result<Option<bool>> {
+    let mut product_variants = None;
+    let mut configured = false;
+    let mut retained = Vec::with_capacity(attrs.len());
+
+    for attribute in attrs.drain(..) {
+        if !attribute.path().is_ident("strutuct") {
+            retained.push(attribute);
+            continue;
+        }
+        if configured {
+            return Err(Error::new_spanned(
+                attribute,
+                "duplicate `strutuct` configuration attribute",
+            ));
+        }
+        configured = true;
+        attribute.parse_nested_meta(|meta| {
+            if !meta.path.is_ident("product_variants") {
+                return Err(meta.error("unknown `strutuct` option"));
+            }
+            if product_variants.is_some() {
+                return Err(meta.error("duplicate `product_variants` option"));
+            }
+            product_variants = Some(meta.value()?.parse::<LitBool>()?.value);
+            Ok(())
+        })?;
+    }
+
+    *attrs = retained;
+    Ok(product_variants)
+}
+
 /// Parses a declaration body after its name and infers its algebraic shape.
-fn parse_declaration(ident: Ident, input: ParseStream) -> syn::Result<Declaration> {
+fn parse_declaration(
+    attrs: Vec<Attribute>,
+    ident: Ident,
+    input: ParseStream,
+) -> syn::Result<Declaration> {
     if input.is_empty() {
         return Err(Error::new(
             ident.span(),
@@ -169,11 +263,30 @@ fn parse_declaration(ident: Ident, input: ParseStream) -> syn::Result<Declaratio
 
     let body = if begins_struct_field(input) {
         DeclarationBody::Struct(parse_struct_fields(input)?)
+    } else if begins_tuple_declaration(input)? {
+        DeclarationBody::Tuple(parse_tuple_fields(input)?)
     } else {
-        DeclarationBody::Enum(parse_enum_variants(input)?)
+        DeclarationBody::Enum(parse_enum_variants(&ident, input)?)
     };
 
-    Ok(Declaration { ident, body })
+    Ok(Declaration { attrs, ident, body })
+}
+
+/// Reports whether the complete body is one product containing at least two types.
+fn begins_tuple_declaration(input: ParseStream) -> syn::Result<bool> {
+    let fork = input.fork();
+    if !fork.peek(Paren) {
+        return Ok(false);
+    }
+
+    let content;
+    parenthesized!(content in fork);
+    if fork.peek(Token![,]) && fork.parse::<Token![,]>().is_err() {
+        return Ok(false);
+    }
+
+    let fields = parse_type_list(&content)?;
+    Ok(fork.is_empty() && fields.len() >= 2 && content.is_empty())
 }
 
 /// Reports whether the next member has the `field: Type` shape.
@@ -210,17 +323,54 @@ fn parse_struct_fields(input: ParseStream) -> syn::Result<Vec<StructField>> {
     Ok(fields)
 }
 
+/// Parses the positional fields of one tuple declaration.
+fn parse_tuple_fields(input: ParseStream) -> syn::Result<Vec<TypeExpression>> {
+    let content;
+    parenthesized!(content in input);
+    let fields = parse_type_list(&content)?;
+    if fields.len() < 2 {
+        return Err(content.error("a tuple declaration requires at least two fields"));
+    }
+    if input.peek(Token![,]) {
+        input.parse::<Token![,]>()?;
+    }
+    if !input.is_empty() {
+        return Err(input.error("unexpected tokens after tuple declaration"));
+    }
+    Ok(fields)
+}
+
+/// Parses a comma-separated list of type expressions.
+fn parse_type_list(input: ParseStream) -> syn::Result<Vec<TypeExpression>> {
+    let mut fields = Vec::new();
+    while !input.is_empty() {
+        fields.push(input.parse()?);
+        if !input.is_empty() {
+            input.parse::<Token![,]>()?;
+        }
+    }
+    Ok(fields)
+}
+
 /// Parses variants, allowing commas to be omitted between delimiter-bounded forms.
-fn parse_enum_variants(input: ParseStream) -> syn::Result<Vec<EnumVariant>> {
+fn parse_enum_variants(parent: &Ident, input: ParseStream) -> syn::Result<Vec<ParsedEnumVariant>> {
     let mut variants = Vec::new();
 
     while !input.is_empty() {
-        let variant = if input.peek(Paren) {
+        let mut attrs = input.call(Attribute::parse_outer)?;
+        let product_variants = take_product_variants(&mut attrs)?;
+        let kind = if input.peek(Paren) {
             let content;
             parenthesized!(content in input);
-            let ty = content.parse()?;
-            if !content.is_empty() {
+            let mut fields = parse_type_list(&content)?;
+            if fields.len() != 1 {
                 return Err(content.error("an implicit variant accepts exactly one type"));
+            }
+            let mut ty = fields.pop().expect("checked one field above");
+            if input.peek(Brace) {
+                let definition;
+                syn::braced!(definition in input);
+                ty = define_type(ty, &definition)?;
             }
             EnumVariant::Implicit(Box::new(ty))
         } else {
@@ -229,19 +379,29 @@ fn parse_enum_variants(input: ParseStream) -> syn::Result<Vec<EnumVariant>> {
             if input.peek(Brace) {
                 let content;
                 syn::braced!(content in input);
-                EnumVariant::Implicit(Box::new(TypeExpression {
-                    base: TypeBase::Nested(Box::new(parse_declaration(ident, &content)?)),
-                    wrappers: Vec::new(),
-                }))
+                let generated_ident = concatenate(&[parent, &ident]);
+                EnumVariant::Generated {
+                    ident,
+                    declaration: Box::new(parse_declaration(
+                        Vec::new(),
+                        generated_ident,
+                        &content,
+                    )?),
+                }
             } else if input.peek(Paren) {
                 let content;
                 parenthesized!(content in input);
-                let mut fields = Vec::new();
-                while !content.is_empty() {
-                    fields.push(content.parse()?);
-                    if !content.is_empty() {
-                        content.parse::<Token![,]>()?;
+                let mut fields = parse_type_list(&content)?;
+                if input.peek(Brace) {
+                    if fields.len() != 1 {
+                        return Err(
+                            content.error("a generated payload requires exactly one type name")
+                        );
                     }
+                    let definition;
+                    syn::braced!(definition in input);
+                    let ty = fields.pop().expect("checked one field above");
+                    fields.push(define_type(ty, &definition)?);
                 }
                 EnumVariant::Tuple { ident, fields }
             } else {
@@ -249,7 +409,11 @@ fn parse_enum_variants(input: ParseStream) -> syn::Result<Vec<EnumVariant>> {
             }
         };
 
-        variants.push(variant);
+        variants.push(ParsedEnumVariant {
+            attrs,
+            product_variants,
+            kind,
+        });
         if input.peek(Token![,]) {
             input.parse::<Token![,]>()?;
         }
@@ -258,23 +422,62 @@ fn parse_enum_variants(input: ParseStream) -> syn::Result<Vec<EnumVariant>> {
     Ok(variants)
 }
 
+/// Replaces one explicit type name with the declaration defined by the following body.
+fn define_type(expression: TypeExpression, body: ParseStream) -> syn::Result<TypeExpression> {
+    let TypeExpression { base, wrappers } = expression;
+    if !wrappers.is_empty() {
+        return Err(body.error("a generated type name cannot use postfix wrappers"));
+    }
+    let TypeBase::Rust(ty) = base else {
+        return Err(body.error("expected an undeclared type name before this body"));
+    };
+    let Type::Path(path) = ty.as_ref() else {
+        return Err(Error::new_spanned(ty, "expected a single type identifier"));
+    };
+    if path.qself.is_some() || path.path.leading_colon.is_some() || path.path.segments.len() != 1 {
+        return Err(Error::new_spanned(ty, "expected a single type identifier"));
+    }
+    let segment = &path.path.segments[0];
+    if !segment.arguments.is_empty() {
+        return Err(Error::new_spanned(ty, "expected a single type identifier"));
+    }
+
+    Ok(TypeExpression {
+        base: TypeBase::Nested(Box::new(parse_declaration(
+            Vec::new(),
+            segment.ident.clone(),
+            body,
+        )?)),
+        wrappers: Vec::new(),
+    })
+}
+
 /// Lowers a declaration after recursively lowering all nested declarations.
-fn lower_declaration(declaration: Declaration) -> syn::Result<LoweredDeclaration> {
-    let Declaration { ident, body } = declaration;
+fn lower_declaration(
+    declaration: Declaration,
+    options: Options,
+) -> syn::Result<LoweredDeclaration> {
+    let Declaration { attrs, ident, body } = declaration;
 
     match body {
-        DeclarationBody::Struct(fields) => lower_struct(ident, fields),
-        DeclarationBody::Enum(variants) => lower_enum(ident, variants),
+        DeclarationBody::Struct(fields) => lower_struct(attrs, ident, fields, options),
+        DeclarationBody::Tuple(fields) => lower_tuple(attrs, ident, fields, options),
+        DeclarationBody::Enum(variants) => lower_enum(attrs, ident, variants, options),
     }
 }
 
 /// Emits a public struct after collecting declarations from every field type.
-fn lower_struct(ident: Ident, fields: Vec<StructField>) -> syn::Result<LoweredDeclaration> {
+fn lower_struct(
+    attrs: Vec<Attribute>,
+    ident: Ident,
+    fields: Vec<StructField>,
+    options: Options,
+) -> syn::Result<LoweredDeclaration> {
     let mut items = Vec::new();
     let mut lowered_fields = Vec::with_capacity(fields.len());
 
     for field in fields {
-        let lowered = lower_type(field.ty)?;
+        let lowered = lower_type(field.ty, options)?;
         items.extend(lowered.items);
         let field_ident = field.ident;
         let field_ty = lowered.ty;
@@ -293,6 +496,7 @@ fn lower_struct(ident: Ident, fields: Vec<StructField>) -> syn::Result<LoweredDe
         ident.span(),
     );
     items.push(quote! {
+        #(#attrs)*
         #[doc = #documentation]
         pub struct #ident {
             #(#lowered_fields),*
@@ -307,16 +511,69 @@ fn lower_struct(ident: Ident, fields: Vec<StructField>) -> syn::Result<LoweredDe
     })
 }
 
+/// Emits a public tuple struct after collecting declarations from every field type.
+fn lower_tuple(
+    attrs: Vec<Attribute>,
+    ident: Ident,
+    fields: Vec<TypeExpression>,
+    options: Options,
+) -> syn::Result<LoweredDeclaration> {
+    let mut items = Vec::new();
+    let mut lowered_fields = Vec::with_capacity(fields.len());
+
+    for (index, field) in fields.into_iter().enumerate() {
+        let lowered = lower_type(field, options)?;
+        items.extend(lowered.items);
+        let field_ty = lowered.ty;
+        let field_documentation = LitStr::new(
+            &format!("Field `{ident}::{index}` generated by `strutuct!`."),
+            ident.span(),
+        );
+        lowered_fields.push(quote! {
+            #[doc = #field_documentation]
+            pub #field_ty
+        });
+    }
+
+    let documentation = LitStr::new(
+        &format!("Tuple struct generated by `strutuct!` for `{ident}`."),
+        ident.span(),
+    );
+    items.push(quote! {
+        #(#attrs)*
+        #[doc = #documentation]
+        pub struct #ident(#(#lowered_fields),*);
+    });
+    items.push(emit_tuple_macro(&ident));
+
+    Ok(LoweredDeclaration {
+        items,
+        ident,
+        kind: DeclarationKind::Tuple,
+    })
+}
+
 /// Emits a public enum and a recursively delegating constructor macro.
-fn lower_enum(ident: Ident, variants: Vec<EnumVariant>) -> syn::Result<LoweredDeclaration> {
+fn lower_enum(
+    attrs: Vec<Attribute>,
+    ident: Ident,
+    variants: Vec<ParsedEnumVariant>,
+    options: Options,
+) -> syn::Result<LoweredDeclaration> {
     let mut items = Vec::new();
     let mut lowered_variants = Vec::with_capacity(variants.len());
     let mut macro_arms = Vec::new();
 
     for variant in variants {
-        match variant {
+        let ParsedEnumVariant {
+            attrs: variant_attrs,
+            product_variants,
+            kind,
+        } = variant;
+        let product_variants = product_variants.unwrap_or(options.product_variants);
+        match kind {
             EnumVariant::Implicit(ty) => {
-                let lowered = lower_type(*ty)?;
+                let lowered = lower_type(*ty, options)?;
                 items.extend(lowered.items);
                 let payload_name = lowered.name.ok_or_else(|| {
                     Error::new(
@@ -324,13 +581,14 @@ fn lower_enum(ident: Ident, variants: Vec<EnumVariant>) -> syn::Result<LoweredDe
                         "cannot derive an implicit variant name from this type; name the variant explicitly",
                     )
                 })?;
-                let variant_ident = concatenate(&[&ident, &payload_name]);
+                let variant_ident = concatenate(&[&payload_name, &ident]);
                 let payload_ty = lowered.ty;
                 let variant_documentation = LitStr::new(
                     &format!("Variant `{ident}::{variant_ident}` generated by `strutuct!`."),
                     variant_ident.span(),
                 );
                 lowered_variants.push(quote! {
+                    #(#variant_attrs)*
                     #[doc = #variant_documentation]
                     #variant_ident(#payload_ty)
                 });
@@ -348,6 +606,13 @@ fn lower_enum(ident: Ident, variants: Vec<EnumVariant>) -> syn::Result<LoweredDe
                             macro_arms.push(quote! {
                                 (#payload_name { $($fields:tt)* }) => {
                                     #ident::#variant_ident(#payload_name! { $($fields)* })
+                                };
+                            });
+                        }
+                        Some(DeclarationKind::Tuple) => {
+                            macro_arms.push(quote! {
+                                (#payload_name($($fields:tt)*)) => {
+                                    #ident::#variant_ident(#payload_name!($($fields)*))
                                 };
                             });
                         }
@@ -371,20 +636,128 @@ fn lower_enum(ident: Ident, variants: Vec<EnumVariant>) -> syn::Result<LoweredDe
                 ident: variant_ident,
                 fields,
             } => {
+                let mut fields = fields
+                    .into_iter()
+                    .map(|field| lower_type(field, options))
+                    .collect::<syn::Result<Vec<_>>>()?;
+                for field in &mut fields {
+                    items.append(&mut field.items);
+                }
+                if let [field] = fields.as_slice()
+                    && !field.wrapped
+                    && let (Some(payload_name), Some(kind)) = (&field.name, field.nested_kind)
+                {
+                    macro_arms.push(nested_variant_arm(
+                        &ident,
+                        &variant_ident,
+                        &variant_ident,
+                        payload_name,
+                        kind,
+                    ));
+                }
+                let product = product_variants && fields.len() >= 2;
+                if product {
+                    macro_arms.push(quote! {
+                        (#variant_ident($($arguments:tt)*)) => {
+                            #ident::#variant_ident(($($arguments)*))
+                        };
+                    });
+                }
                 let mut lowered_fields = Vec::with_capacity(fields.len());
                 for field in fields {
-                    let lowered = lower_type(field)?;
-                    items.extend(lowered.items);
-                    lowered_fields.push(lowered.ty);
+                    lowered_fields.push(field.ty);
                 }
                 let variant_documentation = LitStr::new(
                     &format!("Variant `{ident}::{variant_ident}` generated by `strutuct!`."),
                     variant_ident.span(),
                 );
-                lowered_variants.push(quote! {
-                    #[doc = #variant_documentation]
-                    #variant_ident(#(#lowered_fields),*)
-                });
+                if product {
+                    lowered_variants.push(quote! {
+                        #(#variant_attrs)*
+                        #[doc = #variant_documentation]
+                        #variant_ident((#(#lowered_fields),*))
+                    });
+                } else {
+                    lowered_variants.push(quote! {
+                        #(#variant_attrs)*
+                        #[doc = #variant_documentation]
+                        #variant_ident(#(#lowered_fields),*)
+                    });
+                }
+            }
+            EnumVariant::Generated {
+                ident: variant_ident,
+                declaration,
+            } => {
+                let Declaration {
+                    attrs: declaration_attrs,
+                    ident: payload_ident,
+                    body,
+                } = *declaration;
+
+                match (product_variants, body) {
+                    (false, DeclarationBody::Struct(fields)) => {
+                        let mut lowered_fields = Vec::with_capacity(fields.len());
+                        for field in fields {
+                            let lowered = lower_type(field.ty, options)?;
+                            items.extend(lowered.items);
+                            let field_ident = field.ident;
+                            let field_ty = lowered.ty;
+                            let field_documentation = LitStr::new(
+                                &format!(
+                                    "Field `{ident}::{variant_ident}::{field_ident}` generated by `strutuct!`."
+                                ),
+                                field_ident.span(),
+                            );
+                            lowered_fields.push(quote! {
+                                #[doc = #field_documentation]
+                                #field_ident: #field_ty
+                            });
+                        }
+                        let variant_documentation = LitStr::new(
+                            &format!(
+                                "Variant `{ident}::{variant_ident}` generated by `strutuct!`."
+                            ),
+                            variant_ident.span(),
+                        );
+                        lowered_variants.push(quote! {
+                            #(#variant_attrs)*
+                            #(#declaration_attrs)*
+                            #[doc = #variant_documentation]
+                            #variant_ident { #(#lowered_fields),* }
+                        });
+                    }
+                    (_, body) => {
+                        let lowered = lower_declaration(
+                            Declaration {
+                                attrs: declaration_attrs,
+                                ident: payload_ident,
+                                body,
+                            },
+                            options,
+                        )?;
+                        items.extend(lowered.items);
+                        let payload_ident = lowered.ident;
+                        macro_arms.push(nested_variant_arm(
+                            &ident,
+                            &variant_ident,
+                            &variant_ident,
+                            &payload_ident,
+                            lowered.kind,
+                        ));
+                        let variant_documentation = LitStr::new(
+                            &format!(
+                                "Variant `{ident}::{variant_ident}` generated by `strutuct!`."
+                            ),
+                            variant_ident.span(),
+                        );
+                        lowered_variants.push(quote! {
+                            #(#variant_attrs)*
+                            #[doc = #variant_documentation]
+                            #variant_ident(#payload_ident)
+                        });
+                    }
+                }
             }
             EnumVariant::Unit(variant_ident) => {
                 let variant_documentation = LitStr::new(
@@ -392,6 +765,7 @@ fn lower_enum(ident: Ident, variants: Vec<EnumVariant>) -> syn::Result<LoweredDe
                     variant_ident.span(),
                 );
                 lowered_variants.push(quote! {
+                    #(#variant_attrs)*
                     #[doc = #variant_documentation]
                     #variant_ident
                 });
@@ -404,6 +778,7 @@ fn lower_enum(ident: Ident, variants: Vec<EnumVariant>) -> syn::Result<LoweredDe
         ident.span(),
     );
     items.push(quote! {
+        #(#attrs)*
         #[doc = #documentation]
         pub enum #ident {
             #(#lowered_variants),*
@@ -418,8 +793,35 @@ fn lower_enum(ident: Ident, variants: Vec<EnumVariant>) -> syn::Result<LoweredDe
     })
 }
 
+/// Emits one constructor arm delegating through a generated payload type.
+fn nested_variant_arm(
+    parent: &Ident,
+    variant: &Ident,
+    selector: &Ident,
+    payload: &Ident,
+    kind: DeclarationKind,
+) -> TokenStream {
+    match kind {
+        DeclarationKind::Enum => quote! {
+            (#selector::$($tail:tt)+) => {
+                #parent::#variant(#payload!($($tail)+))
+            };
+        },
+        DeclarationKind::Struct => quote! {
+            (#selector { $($fields:tt)* }) => {
+                #parent::#variant(#payload! { $($fields)* })
+            };
+        },
+        DeclarationKind::Tuple => quote! {
+            (#selector($($fields:tt)*)) => {
+                #parent::#variant(#payload!($($fields)*))
+            };
+        },
+    }
+}
+
 /// Lowers a type expression and marks wrapped recursive edges as terminal.
-fn lower_type(expression: TypeExpression) -> syn::Result<LoweredType> {
+fn lower_type(expression: TypeExpression, options: Options) -> syn::Result<LoweredType> {
     let TypeExpression { base, wrappers } = expression;
     let mut lowered = match base {
         TypeBase::Rust(ty) => {
@@ -433,7 +835,7 @@ fn lower_type(expression: TypeExpression) -> syn::Result<LoweredType> {
             }
         }
         TypeBase::Nested(declaration) => {
-            let declaration = lower_declaration(*declaration)?;
+            let declaration = lower_declaration(*declaration, options)?;
             LoweredType {
                 ty: declaration.ident.to_token_stream(),
                 name: Some(declaration.ident),
@@ -484,6 +886,23 @@ fn emit_struct_macro(ident: &Ident) -> TokenStream {
         macro_rules! #ident {
             ($($fields:tt)*) => {
                 #ident { $($fields)* }
+            };
+        }
+    }
+}
+
+/// Emits a same-name macro that constructs a generated tuple struct.
+fn emit_tuple_macro(ident: &Ident) -> TokenStream {
+    let documentation = LitStr::new(
+        &format!("Constructs a `{ident}` value generated by `strutuct!`."),
+        ident.span(),
+    );
+    quote! {
+        #[doc = #documentation]
+        #[allow(unused_macros)]
+        macro_rules! #ident {
+            ($($fields:tt)*) => {
+                #ident($($fields)*)
             };
         }
     }
@@ -588,18 +1007,18 @@ mod tests {
             .to_string();
 
         for expected in [
-            "pub enum Unary",
-            "UnaryPref (Pref)",
-            "UnaryPost (Post)",
+            "pub enum ExprUnary",
+            "PrefExprUnary (Pref)",
+            "PostExprUnary (Post)",
             "pub enum Expr",
-            "ExprUnary (Unary)",
-            "ExprBin (Bin)",
+            "Unary (ExprUnary)",
+            "BinExpr (Bin)",
             "LitStr (String)",
-            "macro_rules ! Unary",
-            "Unary :: UnaryPref (Pref ($ ($ arguments) *))",
+            "macro_rules ! ExprUnary",
+            "ExprUnary :: PrefExprUnary (Pref ($ ($ arguments) *))",
             "macro_rules ! Expr",
-            "Expr :: ExprUnary (Unary ! ($ ($ tail) +))",
-            "Expr :: ExprBin (Bin ($ ($ arguments) *))",
+            "Expr :: Unary (ExprUnary ! ($ ($ tail) +))",
+            "Expr :: BinExpr (Bin ($ ($ arguments) *))",
         ] {
             assert!(
                 expanded.contains(expected),

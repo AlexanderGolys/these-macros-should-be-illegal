@@ -87,6 +87,19 @@ let prefix = Expr!(Unary::Pref(1));
 let literal = Expr!(LitStr("text".to_owned()));
 ```
 
+## Stop qualifying the same standard types forever
+
+`qf!` recursively gives common unqualified types their canonical paths. It is
+mainly for generated code where relying on the caller's imports would be rude:
+
+```rust
+type Messages = qf!(Option<Vec<String>>);
+```
+
+That becomes `::core::option::Option<::std::vec::Vec<::std::string::String>>`.
+Already qualified names stay untouched, so `application::String` continues to
+mean exactly what it says.
+
 ## Use deliberately invalid syntax in a side module
 
 `literally_literal_string!` turns `@@"text"` into an owned `String`, because
@@ -137,8 +150,8 @@ The rules are intentionally simple:
 - `Variant(A, B) = |a, b| expression` gets every field in declaration order;
 - a variant with no usable description produces `None`.
 
-The macro checks the number of closure arguments and fills in their borrowed
-field types. Rust does the interesting part: checking the body and return type.
+The generated accessor invokes the closure with borrowed field bindings. Rust
+checks its argument count, body, and return type.
 
 The return type works itself out from the whole enum:
 
@@ -167,25 +180,64 @@ fun.
 
 ## `strutuct!` details
 
-If the body starts like `name: Type`, it is a struct. If it looks like variants,
-it is an enum. Nested declarations come out before the declarations using them.
+If the body starts like `name: Type`, it is a struct. One parenthesized product
+with at least two elements is a tuple struct. Everything else is an enum.
+Nested declarations come out before the declarations using them.
 
-Parenthesized types create automatically named variants. For example,
-`Unary { (Pref), (Post) }` generates `UnaryPref(Pref)` and `UnaryPost(Post)`.
-Ordinary named constructors such as `LitStr(String)` remain unchanged.
+Inside an enum, names mean variants and parentheses mean types:
+
+```text
+Name(Type) { ... }  defines Type and emits Name(Type)
+Name { ... }        defines ParentName and emits Name(ParentName)
+(Type) { ... }      defines Type and emits TypeParent(Type)
+Name(Type)          stays Name(Type)
+Name                stays Name
+(Type)              becomes TypeParent(Type)
+```
+
+The body in `{ ... }` can itself describe a struct, tuple struct, or enum.
+Multi-field tuple-like variants carry one tuple product, so `Pair(X, Y)` emits
+`Pair((X, Y))`. Struct-like syntax similarly creates a product type by default:
+
+```rust
+strutuct! {
+    Value
+    String { Raw, Escaped }
+    Span { start: usize, end: usize }
+}
+```
+
+This creates `ValueString` and `ValueSpan`, while the variants remain pleasantly
+named `String(ValueString)` and `Span(ValueSpan)`.
+
+If ordinary Rust multi-field variants are useful for one declaration family,
+turn product lowering off with an outer configuration attribute:
+
+```rust
+strutuct! {
+    #[strutuct(product_variants = false)]
+    Value
+    Pair(String, String)
+    Span { start: usize, end: usize }
+    #[strutuct(product_variants = true)]
+    StillPacked(String, String)
+}
+```
+
+The same attribute before a variant overrides the declaration-wide setting.
 
 Each generated type also gets a constructor macro in Rust's conveniently
 separate macro namespace. Every enum macro eats one path segment and calls the
 next one:
 
 ```text
-A!(B::C::D::Variant(value))
+A!(B::C::D(value))
 ```
 
 folds into:
 
 ```text
-A::AB(B::BC(C::CD(D::Variant(value))))
+A::B(AB::C(ABC::D(value)))
 ```
 
 A nested struct ends the path and accepts named fields. Boxed and optional edges
