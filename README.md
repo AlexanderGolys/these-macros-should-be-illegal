@@ -4,33 +4,105 @@
 [![Documentation](https://docs.rs/these-macros-should-be-illegal/badge.svg)](https://docs.rs/these-macros-should-be-illegal)
 [![License](https://img.shields.io/crates/l/these-macros-should-be-illegal.svg)](LICENSE)
 
-A personal Rust procedural-macro laboratory for ideas that probably should not
-be this easy to express. Idiomatic boundaries are optional here: whole-module
-transformations and deliberately cursed generated code are welcome.
+A bag of experimental Rust macros for deleting boilerplate and trying syntax
+that Rust would, quite reasonably, never accept directly. Useful examples first;
+the caveats and implementation yapping are further down.
 
-The root package is a procedural-macro crate for the collection, while
-experiments that need separate dependencies or release cycles can live under
-[`crates/`](crates/).
-
-## Literally literal strings
-
-`literally_literal_string!` is a plain function-like macro which transforms
-only the token stream supplied to it:
-
-```rust
-use these_macros_should_be_illegal::literally_literal_string;
-
-let greeting = literally_literal_string!(@@"hello from inadvisable Rust");
+```sh
+cargo add these-macros-should-be-illegal
 ```
 
-The shared `expand!` macro keeps an entire side-module's custom syntax out of
-Rust's parser without wrapping or indenting that file. List the transformations
-to inject, followed by the out-of-line module declaration:
+## Keep enum descriptions beside their variants
+
+`discriminated_str` lets you write descriptions exactly where you look for them:
+beside the variants. Fixed text, stored text, selected fields, and missing
+descriptions can all live in the same enum:
+
+```rust
+#[discriminated_str(description)]
+enum Failure<'a> {
+    Timeout = "the operation timed out",
+    Message(String),
+    Context { code: u16, text: &'a str } = text,
+    Undescribed(u16),
+}
+
+assert_eq!(Failure::Timeout.description(), Some("the operation timed out"));
+assert_eq!(Failure::Message("broken".into()).description(), Some("broken"));
+assert_eq!(
+    Failure::Context { code: 500, text: "server error" }.description(),
+    Some("server error"),
+);
+assert_eq!(Failure::Undescribed(7).description(), None);
+```
+
+If selecting one field is not enough, use a closure over all the fields:
+
+```rust
+#[discriminated_str(display: String)]
+enum Name {
+    Qualified(String, String) = |module, item| format!("{module}::{item}"),
+    Anonymous = "<anonymous>",
+}
+
+assert_eq!(
+    Name::Qualified("syntax".into(), "Expr".into()).display(),
+    "syntax::Expr",
+);
+```
+
+## Declare small algebraic type families together
+
+`strutuct!` lets you write the little types where they are actually used. It
+pulls them out into normal Rust declarations and generates constructor macros:
+
+```rust
+strutuct! {
+    Request
+    method: Method { Get, Post, Delete },
+    body: String?,
+}
+
+let request = Request!(
+    method: Method!(Post),
+    body: Some("payload".to_owned()),
+);
+```
+
+That one block creates public `Method` and `Request` types in the right order.
+Postfix `T?` and `T*` mean `Option<T>` and `Box<T>`.
+
+Nested enums compose through their generated macros:
+
+```rust
+strutuct! {
+    Expr
+    Unary { (Pref), (Post) }
+    (Bin)
+    LitStr(String)
+    Null
+}
+
+let prefix = Expr!(Unary::Pref(1));
+let literal = Expr!(LitStr("text".to_owned()));
+```
+
+## Use deliberately invalid syntax in a side module
+
+`literally_literal_string!` turns `@@"text"` into an owned `String`, because
+apparently `.to_owned()` was too much ceremony:
+
+```rust
+let greeting: String = literally_literal_string!(@@"hello");
+```
+
+For syntax Rust cannot parse at item level, `expand!` loads an out-of-line module
+and applies the selected transformations before Rust sees its body:
 
 ```rust
 // src/lib.rs
-these_macros_should_be_illegal::expand!(
-    these_macros_should_be_illegal::literally_literal_string;
+expand!(
+    literally_literal_string;
     mod experiments;
 );
 ```
@@ -42,107 +114,41 @@ pub fn greeting() -> String {
 }
 ```
 
-`expand!` reads and lexes `experiments.rs`, then emits an inline module whose
-body is wrapped in the listed function-like macros. Rust therefore parses only
-their final output. The crate targets stable Rust. Cargo may not notice changes
-made only to files read by `expand!`; rerun the build when necessary.
+## `discriminated_str` details
 
-The first rewrite recursively treats two adjacent `@` punctuation tokens
-followed by a Rust string-literal token as an owned string:
-
-```text
-@@"hello"  ->  ::std::string::String::from("hello")
-```
-
-It performs a token-tree transformation, not source-text substitution. Both
-outer (`#[...]`) and inner (`#![...]`) attributes are copied as opaque tokens,
-as are macro invocations explicitly named in `exclude_macros`. Declarative
-macro definitions are traversed like every other group. The current prototype
-loads one out-of-line module file; recursive external child-module loading
-remains future work.
-
-Shared configuration can be written directly in `expand!`:
+The name inside the attribute becomes the method name. Results are borrowed by
+default; write `: String` when you want an owned result. `: &str` is also
+accepted when you want to be explicit:
 
 ```rust
-these_macros_should_be_illegal::expand!(
-    these_macros_should_be_illegal::literally_literal_string,
-    exclude_macros = (raw_tokens);
-    mod experiments;
-);
-```
-
-For any configuration-aware, item-position function-like macro in this crate,
-the generic exclusion wrapper provides the same option without changing that
-macro's public grammar:
-
-```rust
-#[these_macros_should_be_illegal::excluded_macros(raw_tokens)]
-literally_literal_string! {
-    // transformed tokens
+#[discriminated_str(label: String)]
+enum OwnedLabel {
+    Fixed = "fixed",
+    Dynamic(String),
 }
 ```
 
-## String discriminants
+The rules are intentionally simple:
 
-`#[discriminated_str(method)]` keeps an enum's string metadata beside each variant and
-generates a borrowed accessor:
+- `Variant = "text"` supplies a fixed description;
+- a sole `String` or `&str` field is inferred automatically;
+- `Variant(T, String) = 1` selects a zero-based tuple field;
+- `Variant { text: String } = text` selects a named field;
+- `Variant(A, B) = |a, b| expression` gets every field in declaration order;
+- a variant with no usable description produces `None`.
 
-```rust
-use these_macros_should_be_illegal::discriminated_str;
+The macro checks the number of closure arguments and fills in their borrowed
+field types. Rust does the interesting part: checking the body and return type.
 
-#[discriminated_str(description)]
-pub enum Action {
-    Quit = "quit the application",
-    Submit = "evaluate the input",
-}
-```
-
-This becomes a unit-variant enum with
-`pub const fn description(&self) -> &'static str`. Select an allocating
-`String` accessor explicitly when desired; optionality is inferred separately:
-
-```rust
-#[discriminated_str(description: String)]
-enum OwnedDescription { Example = "allocated on access" }
-
-#[discriminated_str(description: &str)]
-enum BorrowedDescription { Example = "borrowed" }
-```
-
-Those typed forms generate ordinary, non-`const` methods.
-
-Variants may retain ordinary tuple or struct payloads alongside a fixed
-description. A sole `String` or `&str` field becomes the dynamic description.
-For variants with multiple fields, an integer selects a zero-based tuple field
-and an identifier selects a named field. A closure receives every field in
-declaration order and computes the description from the complete product:
-
-```rust
-#[discriminated_str(description: String)]
-enum Error<'a> {
-    Io(std::io::Error) = "I/O error",
-    Pair(String, String) = 1,
-    Context { primary: &'a str, secondary: &'a str } = primary,
-    Combined(String, String) = |left, right| format!("{left}: {right}"),
-    Custom(String),
-}
-```
-
-The closure may take any number of arguments; the macro checks its arity and
-lets Rust check its return type. Use `description: String` when it returns an
-owned string, as in `Combined` above.
-
-The return type follows the complete enum shape:
+The return type works itself out from the whole enum:
 
 - all fixed descriptions produce `const fn -> &'static str`;
-- any dynamic description produces `fn -> &str`;
-- any variant without a fixed or dynamic description changes the return to
-  `Option<&str>`; when every present description is fixed, this remains a
-  `const fn` returning `Option<&'static str>`;
-- `: String` changes those corresponding borrowed forms to `String` or
-  `Option<String>`.
+- any selected, inferred, or computed description produces `fn -> &str`;
+- any missing description wraps the result in `Option`;
+- fixed-or-missing enums retain `const fn -> Option<&'static str>`;
+- `: String` produces `String` or `Option<String>` instead.
 
-Missing descriptions can instead use their variant names:
+Missing descriptions can use their variant names instead of `None`:
 
 ```rust
 #[discriminated_str(description = stringify)]
@@ -150,91 +156,83 @@ enum State {
     Explicit = "custom spelling",
     Generated,
 }
+
+assert_eq!(State::Generated.description(), "Generated");
 ```
 
-Here `State::Generated.description()` returns `"Generated"`. Lifetimes on the
-enum and selected `&'a str` fields are preserved; the accessor returns a
-reborrow tied to `&self`.
+Generics, where clauses, and lifetimes are copied through. Borrowed results live
+as long as the borrow of `self`. `cfg` and `cfg_attr` are also copied onto the
+generated match arms, otherwise conditional variants would immediately ruin the
+fun.
 
-## Nested algebraic declarations
+## `strutuct!` details
 
-`strutuct!` generates one struct or enum together with declarations nested in
-its fields or variants. A body beginning with `name: Type` is a struct; any
-variant-shaped body is an enum:
+If the body starts like `name: Type`, it is a struct. If it looks like variants,
+it is an enum. Nested declarations come out before the declarations using them.
+
+Parenthesized types create automatically named variants. For example,
+`Unary { (Pref), (Post) }` generates `UnaryPref(Pref)` and `UnaryPost(Post)`.
+Ordinary named constructors such as `LitStr(String)` remain unchanged.
+
+Each generated type also gets a constructor macro in Rust's conveniently
+separate macro namespace. Every enum macro eats one path segment and calls the
+next one:
+
+```text
+A!(B::C::D::Variant(value))
+```
+
+folds into:
+
+```text
+A::AB(B::BC(C::CD(D::Variant(value))))
+```
+
+A nested struct ends the path and accepts named fields. Boxed and optional edges
+also stop there, so `T*` can express recursion without making the constructor
+macro expand forever. That would be a different kind of illegal.
+
+## The boring but important token rules
+
+Transformations recurse through every token group. Attributes stay opaque, and
+excluded macro calls are copied without poking around inside them.
+
+Configure exclusions directly in `expand!`:
 
 ```rust
-use these_macros_should_be_illegal::strutuct;
+expand!(
+    literally_literal_string,
+    exclude_macros = (raw_tokens);
+    mod experiments;
+);
+```
 
-strutuct! {
-    S
-    a: A { A1, A2, A3 },
-    b: B,
+Or wrap a configuration-aware item-position macro:
+
+```rust
+#[excluded_macros(raw_tokens)]
+literally_literal_string! {
+    // transformed tokens
 }
 ```
 
-This emits public `A` and `S` declarations, with `A` ordered before the struct
-that uses it. Parenthesized types create automatically named variants, while
-ordinary named constructors remain unchanged:
+`expand!` currently loads one out-of-line module file. It does not recursively
+load external child modules. Cargo may also miss changes made only to files read
+by the procedural macro, so rerun the build when necessary.
 
-```rust
-strutuct! {
-    Expr
-    Unary { (Pref), (Post) }
-    (Bin)
-    LitStr(String)
-    Null
-}
-```
+## About the crate
 
-The generated enums contain `UnaryPref(Pref)`, `UnaryPost(Post)`,
-`ExprUnary(Unary)`, `ExprBin(Bin)`, `LitStr(String)`, and `Null`. Each generated
-type also receives a constructor macro in Rust's separate macro namespace:
+This is a personal stable-Rust macro laboratory. The APIs are small,
+experimental, and allowed to evolve whenever a better crime presents itself.
+Closely related macros live in the root crate; experiments that need their own
+dependencies or release cycle can move into [`crates/`](crates/).
 
-```rust
-let prefix = Expr!(Unary::Pref(1));
-let literal = Expr!(LitStr("text".to_owned()));
-let value = S!(a: A!(A2), b: B(7));
-```
-
-Each enum macro consumes one nested path segment and invokes the next enum's
-macro, so `A!(B::C::D::Variant(value))` folds to
-`A::AB(B::BC(C::CD(D::Variant(value))))`. A nested struct ends the path and
-accepts its fields with `A!(B { field: value })`; a root struct accepts the same
-field body directly.
-
-Postfix `T?` and `T*` lower to `Option<T>` and `Box<T>`, respectively. Wrapped
-edges are terminal for recursive constructor macros, allowing `*` to mark
-recursive indirection without producing an infinite expansion.
-
-## Adding a macro
-
-Add closely related macros to the root crate. For an independent experiment,
-create a library crate from the repository root:
-
-```sh
-cargo new --lib crates/example-macro
-```
-
-Then mark it as a procedural macro in its `Cargo.toml`:
-
-```toml
-[lib]
-proc-macro = true
-```
-
-Workspace crates should inherit the shared edition and lint configuration where
-appropriate. Add unit tests for parsing and generation, integration tests for
-consumer behavior, and compile-fail tests for diagnostics.
-
-## Development
+Development gates:
 
 ```sh
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --all-features
-cargo test --workspace --all-features
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --all-features --no-fail-fast
 ```
 
-## Publishing and license
-
-Releases are published through GitHub and crates.io. The project is available
-under the [MIT License](LICENSE).
+Released through GitHub and crates.io under the [MIT License](LICENSE).
