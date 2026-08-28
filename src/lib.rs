@@ -7,7 +7,7 @@ mod mbe;
 
 use flust::{
     discriminated_str_impl, excluded_macros_impl, expand_impl, literally_literal_string_impl,
-    strutuct_impl,
+    shared_match_arms_impl, strutuct_impl,
 };
 use mbe::qualify_common as qualify_common_impl;
 use proc_macro::TokenStream;
@@ -16,6 +16,32 @@ use proc_macro::TokenStream;
 #[proc_macro]
 pub fn literally_literal_string(input: TokenStream) -> TokenStream {
     literally_literal_string_impl(input.into()).into()
+}
+
+/// Clones a shared match-arm RHS for alternatives separated by `||`.
+///
+/// Parenthesize `(pattern if guard)` when one alternative has its own guard.
+///
+/// ```
+/// use these_macros_should_be_illegal::shared_match_arms;
+///
+/// enum Value {
+///     Number(u32),
+///     Character(char),
+/// }
+///
+/// let value = Value::Number(3);
+/// let text = shared_match_arms! {
+///     match value {
+///         Value::Number(value) || Value::Character(value) => value.to_string(),
+///     }
+/// };
+///
+/// assert_eq!(text, "3");
+/// ```
+#[proc_macro]
+pub fn shared_match_arms(input: TokenStream) -> TokenStream {
+    shared_match_arms_impl(input.into()).into()
 }
 
 /// Qualifies common unqualified standard-library types inside one Rust type.

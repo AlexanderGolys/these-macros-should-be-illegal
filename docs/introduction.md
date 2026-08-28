@@ -12,7 +12,9 @@ cargo add these-macros-should-be-illegal
 Import whichever macro you use:
 
 ```rust
-use these_macros_should_be_illegal::{discriminated_str, qf, strutuct};
+use these_macros_should_be_illegal::{
+    discriminated_str, qf, shared_match_arms, strutuct,
+};
 ```
 
 ## Pick your crime
@@ -23,6 +25,8 @@ use these_macros_should_be_illegal::{discriminated_str, qf, strutuct};
   in one place and generates constructor macros for them.
 - [`qf!`](qf.md) gives common standard-library types their fully qualified
   paths inside generated code.
+- [`shared_match_arms!`](shared-match-arms.md) shares an RHS between patterns
+  whose bindings have different concrete types.
 - [`literally_literal_string!` and `expand!`](literal-syntax.md) let token
   rewriting handle syntax that Rust cannot parse as an ordinary source file.
 

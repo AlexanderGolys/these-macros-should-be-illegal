@@ -11,6 +11,8 @@ The first kind generates ordinary Rust from compact input:
 
 The second kind rewrites raw token streams recursively:
 
+- [`shared_match_arms!`](shared-match-arms.md) duplicates one match-arm RHS
+  across independently typed patterns;
 - `literally_literal_string!` recognizes the deliberately invalid `@@"text"`;
 - `excluded_macros` marks macro invocations whose contents must remain opaque;
 - `expand!` loads an out-of-line module and applies one or more rewriting

@@ -10,6 +10,8 @@ mod expand;
 mod literally_literal_string;
 /// Provides shared recursive token preprocessing and configuration handling.
 mod preprocessing;
+/// Implements shared match-arm right-hand sides separated by `||`.
+mod shared_match_arms;
 /// Implements nested algebraic declarations for the `strutuct` macro.
 mod strutuct;
 
@@ -21,5 +23,7 @@ pub(super) use excluded_macros::excluded_macros as excluded_macros_impl;
 pub(super) use expand::expand as expand_impl;
 /// Rewrites the extended owned-string syntax.
 pub(super) use literally_literal_string::literally_literal_string as literally_literal_string_impl;
+/// Rewrites shared match-arm alternatives into independent ordinary arms.
+pub(super) use shared_match_arms::shared_match_arms as shared_match_arms_impl;
 /// Lowers one nested struct, tuple struct, or enum declaration.
 pub(super) use strutuct::strutuct as strutuct_impl;

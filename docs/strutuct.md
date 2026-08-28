@@ -33,6 +33,36 @@ The body shape decides what gets generated:
 
 Nested `{ ... }` bodies use the same rules recursively.
 
+Nested declarations can also appear inside ordinary generic types. The generated
+type is hoisted as usual, while the surrounding container stays untouched:
+
+```rust
+use these_macros_should_be_illegal::strutuct;
+
+struct Delimited<T>(T);
+
+strutuct! {
+    Arguments
+    content: Delimited<Option<ArgumentListContent {
+        Empty,
+        Values(Vec<String>),
+    }>>,
+}
+
+let arguments = Arguments!(
+    content: Delimited(Some(ArgumentListContent!(Empty))),
+);
+
+assert!(matches!(
+    arguments.content,
+    Delimited(Some(ArgumentListContent::Empty)),
+));
+```
+
+This works recursively through generic arguments, tuples, arrays, references,
+and other grouped type syntax. A declaration inside a type macro invocation is
+left to that macro instead of being hoisted by `strutuct!`.
+
 ## Enum grammar
 
 Parentheses refer to terminal payload types that already exist. Vertical bars

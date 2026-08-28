@@ -1,6 +1,6 @@
 //! Nested algebraic data declarations for the `strutuct!` macro.
 
-use proc_macro2::{Span, TokenStream};
+use proc_macro2::{Group, Span, TokenStream, TokenTree};
 use quote::{ToTokens, quote};
 use syn::{
     Attribute, Error, Ident, LitBool, LitStr, Path, Token, Type,
@@ -12,6 +12,8 @@ use syn::{
     spanned::Spanned,
     token::{Brace, Paren},
 };
+
+use TokenTree::{Group as GroupTT, Ident as IdentTT, Punct as PunctTT};
 
 use super::preprocessing::split_config_prefix;
 
@@ -112,10 +114,21 @@ struct TypeExpression {
     wrappers: Vec<TypeWrapper>,
 }
 
+/// One braced declaration parsed from a reconstructed type-token prefix.
+struct InlineDeclaration {
+    /// Parsed declaration returned to the containing type expression.
+    declaration: Declaration,
+}
+
 /// The unwrapped portion of a field or variant type.
 enum TypeBase {
-    /// Any type already understood by Rust and `syn`.
-    Rust(Box<Type>),
+    /// A Rust type together with declarations embedded in its generic arguments.
+    Rust {
+        /// The ordinary Rust type left after replacing inline declarations by their names.
+        ty: Box<Type>,
+        /// Inline declarations hoisted out of the Rust type.
+        nested: Vec<Declaration>,
+    },
     /// A nested declaration that must be hoisted before its parent.
     Nested(Box<Declaration>),
 }
@@ -186,32 +199,201 @@ impl Parse for Invocation {
 impl Parse for TypeExpression {
     /// Parses the base type before consuming left-associative postfix wrappers.
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let base = if input.peek(Token![|]) {
-            TypeBase::Nested(Box::new(parse_named_declaration(input)?))
+        let (base, wrappers) = if input.peek(Token![|]) {
+            (
+                TypeBase::Nested(Box::new(parse_named_declaration(input)?)),
+                parse_type_wrappers(input)?,
+            )
         } else if begins_nested_declaration(input) {
             let ident = Ident::parse_any(input)?;
             let content;
             syn::braced!(content in input);
-            TypeBase::Nested(Box::new(parse_declaration(Vec::new(), ident, &content)?))
+            (
+                TypeBase::Nested(Box::new(parse_declaration(Vec::new(), ident, &content)?)),
+                parse_type_wrappers(input)?,
+            )
         } else {
-            TypeBase::Rust(Box::new(input.parse()?))
+            parse_rust_type(input)?
         };
-        let mut wrappers = Vec::new();
-
-        loop {
-            if input.peek(Token![?]) {
-                input.parse::<Token![?]>()?;
-                wrappers.push(TypeWrapper::Option);
-            } else if input.peek(Token![*]) {
-                input.parse::<Token![*]>()?;
-                wrappers.push(TypeWrapper::Box);
-            } else {
-                break;
-            }
-        }
 
         Ok(Self { base, wrappers })
     }
+}
+
+/// Parses an identifier followed by its complete inline declaration body.
+impl Parse for InlineDeclaration {
+    /// Parses the generated type name and infers the shape of its braced body.
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let ident = Ident::parse_any(input)?;
+        let content;
+        syn::braced!(content in input);
+        Ok(Self {
+            declaration: parse_declaration(Vec::new(), ident, &content)?,
+        })
+    }
+}
+
+/// Parses postfix ownership wrappers that follow a directly nested declaration.
+fn parse_type_wrappers(input: ParseStream) -> syn::Result<Vec<TypeWrapper>> {
+    let mut wrappers = Vec::new();
+    loop {
+        if input.peek(Token![?]) {
+            input.parse::<Token![?]>()?;
+            wrappers.push(TypeWrapper::Option);
+        } else if input.peek(Token![*]) {
+            input.parse::<Token![*]>()?;
+            wrappers.push(TypeWrapper::Box);
+        } else {
+            break;
+        }
+    }
+    Ok(wrappers)
+}
+
+/// Parses one ordinary Rust type while hoisting declarations from inside it.
+fn parse_rust_type(input: ParseStream) -> syn::Result<(TypeBase, Vec<TypeWrapper>)> {
+    let mut tokens = Vec::new();
+    let mut angle_depth = 0usize;
+    while !(input.is_empty() || angle_depth == 0 && input.peek(Token![,])) {
+        let token = input.parse::<TokenTree>()?;
+        if let PunctTT(punctuation) = &token {
+            match punctuation.as_char() {
+                '<' => angle_depth += 1,
+                '>' if angle_depth > 0 => angle_depth -= 1,
+                _ => {}
+            }
+        }
+        tokens.push(token);
+    }
+
+    let mut wrappers = Vec::new();
+    while let Some(PunctTT(punctuation)) = tokens.last() {
+        let wrapper = match punctuation.as_char() {
+            '?' => TypeWrapper::Option,
+            '*' => TypeWrapper::Box,
+            _ => break,
+        };
+        tokens.pop();
+        wrappers.push(wrapper);
+    }
+    wrappers.reverse();
+
+    let (tokens, nested) = rewrite_nested_type_declarations(tokens)?;
+    let ty = parse2::<Type>(tokens)?;
+    Ok((
+        TypeBase::Rust {
+            ty: Box::new(ty),
+            nested,
+        },
+        wrappers,
+    ))
+}
+
+/// Replaces inline declarations by their names throughout one Rust type.
+fn rewrite_nested_type_declarations(
+    tokens: Vec<TokenTree>,
+) -> syn::Result<(TokenStream, Vec<Declaration>)> {
+    let mut output = TokenStream::new();
+    let mut declarations = Vec::new();
+    let mut index = 0;
+
+    while index < tokens.len() {
+        if let Some(length) = opaque_type_prefix_length(&tokens[index..]) {
+            output.extend(tokens[index..index + length].iter().cloned());
+            index += length;
+            continue;
+        }
+
+        if let Some((length, declaration)) = parse_inline_type_declaration(&tokens[index..])? {
+            output.extend([IdentTT(declaration.ident.clone())]);
+            declarations.push(declaration);
+            index += length;
+            continue;
+        }
+
+        match tokens[index].clone() {
+            GroupTT(group) => {
+                let (stream, mut nested) =
+                    rewrite_nested_type_declarations(group.stream().into_iter().collect())?;
+                let mut rewritten = Group::new(group.delimiter(), stream);
+                rewritten.set_span(group.span());
+                output.extend([GroupTT(rewritten)]);
+                declarations.append(&mut nested);
+            }
+            token => output.extend([token]),
+        }
+        index += 1;
+    }
+
+    Ok((output, declarations))
+}
+
+/// Reports an attribute or macro invocation whose contents are opaque type tokens.
+fn opaque_type_prefix_length(tokens: &[TokenTree]) -> Option<usize> {
+    if matches!(tokens.first(), Some(PunctTT(punctuation)) if punctuation.as_char() == '#') {
+        if matches!(tokens.get(1), Some(GroupTT(group)) if group.delimiter() == proc_macro2::Delimiter::Bracket)
+        {
+            return Some(2);
+        }
+        if matches!(tokens.get(1), Some(PunctTT(punctuation)) if punctuation.as_char() == '!')
+            && matches!(tokens.get(2), Some(GroupTT(group)) if group.delimiter() == proc_macro2::Delimiter::Bracket)
+        {
+            return Some(3);
+        }
+    }
+
+    if matches!(tokens.first(), Some(IdentTT(_)))
+        && matches!(tokens.get(1), Some(PunctTT(punctuation)) if punctuation.as_char() == '!')
+        && matches!(tokens.get(2), Some(GroupTT(_)))
+    {
+        return Some(3);
+    }
+
+    None
+}
+
+/// Parses an inline declaration prefix used as one component of a Rust type.
+fn parse_inline_type_declaration(
+    tokens: &[TokenTree],
+) -> syn::Result<Option<(usize, Declaration)>> {
+    if let (Some(IdentTT(ident)), Some(GroupTT(body))) = (tokens.first(), tokens.get(1))
+        && body.delimiter() == proc_macro2::Delimiter::Brace
+    {
+        let declaration = parse_braced_type_declaration(ident, body)?;
+        return Ok(Some((2, declaration)));
+    }
+
+    if matches!(tokens.first(), Some(PunctTT(punctuation)) if punctuation.as_char() == '|')
+        && let Some(IdentTT(ident)) = tokens.get(1)
+        && matches!(tokens.get(2), Some(PunctTT(punctuation)) if punctuation.as_char() == '|')
+    {
+        if let Some(GroupTT(body)) = tokens.get(3)
+            && body.delimiter() == proc_macro2::Delimiter::Brace
+        {
+            let declaration = parse_braced_type_declaration(ident, body)?;
+            return Ok(Some((4, declaration)));
+        }
+        return Ok(Some((
+            3,
+            Declaration {
+                attrs: Vec::new(),
+                ident: ident.clone(),
+                body: DeclarationBody::Unit,
+            },
+        )));
+    }
+
+    Ok(None)
+}
+
+/// Parses a name and brace group as one complete inline declaration.
+fn parse_braced_type_declaration(ident: &Ident, body: &Group) -> syn::Result<Declaration> {
+    let parsed = parse2::<InlineDeclaration>(
+        [IdentTT(ident.clone()), GroupTT(body.clone())]
+            .into_iter()
+            .collect(),
+    )?;
+    Ok(parsed.declaration)
 }
 
 /// Expands one nested algebraic declaration into ordinary Rust items.
@@ -283,8 +465,15 @@ fn propagate_declaration_attrs(body: &mut DeclarationBody, attrs: &[Attribute]) 
 
 /// Applies inherited attributes when a type expression defines a nested type.
 fn propagate_type_attrs(expression: &mut TypeExpression, attrs: &[Attribute]) -> syn::Result<()> {
-    if let TypeBase::Nested(declaration) = &mut expression.base {
-        propagate_nested_declaration_attrs(declaration, attrs)?;
+    match &mut expression.base {
+        TypeBase::Rust { nested, .. } => {
+            for declaration in nested {
+                propagate_nested_declaration_attrs(declaration, attrs)?;
+            }
+        }
+        TypeBase::Nested(declaration) => {
+            propagate_nested_declaration_attrs(declaration, attrs)?;
+        }
     }
 
     Ok(())
@@ -453,11 +642,14 @@ fn parse_struct_fields(input: ParseStream) -> syn::Result<Vec<StructField>> {
         let ident = Ident::parse_any(input)?;
         input.parse::<Token![:]>()?;
         let mut ty: TypeExpression = input.parse()?;
-        if let TypeBase::Nested(declaration) = &mut ty.base {
+        let mut nested = nested_declarations_mut(&mut ty);
+        if !nested.is_empty() {
             let mut field_attrs = Vec::with_capacity(attrs.len());
             for attribute in attrs {
                 if is_derive(&attribute) {
-                    declaration.attrs.push(attribute);
+                    for declaration in &mut *nested {
+                        declaration.attrs.push(attribute.clone());
+                    }
                 } else {
                     field_attrs.push(attribute);
                 }
@@ -477,6 +669,14 @@ fn parse_struct_fields(input: ParseStream) -> syn::Result<Vec<StructField>> {
     }
 
     Ok(fields)
+}
+
+/// Returns every declaration generated anywhere inside one field type.
+fn nested_declarations_mut(expression: &mut TypeExpression) -> Vec<&mut Declaration> {
+    match &mut expression.base {
+        TypeBase::Rust { nested, .. } => nested.iter_mut().collect(),
+        TypeBase::Nested(declaration) => vec![declaration],
+    }
 }
 
 /// Parses the positional fields of one tuple declaration.
@@ -1025,12 +1225,16 @@ fn emit_unit_macro(ident: &Ident) -> TokenStream {
 fn lower_type(expression: TypeExpression, options: Options) -> syn::Result<LoweredType> {
     let TypeExpression { base, wrappers } = expression;
     let mut lowered = match base {
-        TypeBase::Rust(ty) => {
+        TypeBase::Rust { ty, nested } => {
             let ty = *ty;
+            let mut items = Vec::new();
+            for declaration in nested {
+                items.extend(lower_declaration(declaration, options)?.items);
+            }
             LoweredType {
                 name: type_name(&ty),
                 ty: ty.into_token_stream(),
-                items: Vec::new(),
+                items,
                 nested_kind: None,
                 wrapped: false,
             }
@@ -1239,6 +1443,45 @@ mod tests {
         assert_eq!(derives_for("Root"), ["Clone", "Default"]);
         assert_eq!(derives_for("Branch"), ["Clone", "Debug", "Default"]);
         assert_eq!(derives_for("Leaf"), ["Clone", "Debug", "Default"]);
+    }
+
+    /// Hoists an inline declaration from nested generic arguments before its consumer.
+    #[test]
+    fn lowers_declarations_inside_generic_types() {
+        let expanded = expand(
+            "#[derive(Debug)] Root value: Delimited<Option<Content { Empty, Value(String) }>>,",
+        )
+        .into_token_stream()
+        .to_string();
+
+        assert!(expanded.contains("pub enum Content"));
+        assert!(expanded.contains("derive (Debug)"));
+        assert!(expanded.contains("pub value : Delimited < Option < Content > >"));
+        assert!(expanded.find("pub enum Content") < expanded.find("pub struct Root"));
+    }
+
+    /// Keeps generic commas inside the type while hoisting declarations from grouped arguments.
+    #[test]
+    fn lowers_declarations_from_multiple_generic_arguments() {
+        let expanded = expand("Root value: Either<Left { A }, (Right { B }, Option<Deep { C }>)>,")
+            .into_token_stream()
+            .to_string();
+
+        for declaration in ["Left", "Right", "Deep"] {
+            assert!(expanded.contains(&format!("pub enum {declaration}")));
+        }
+        assert!(expanded.contains("pub value : Either < Left , (Right , Option < Deep >) >"));
+    }
+
+    /// Leaves nested-looking tokens inside a type macro for that macro to interpret.
+    #[test]
+    fn leaves_type_macro_inputs_opaque() {
+        let expanded = expand("Root value: Wrapper<type_macro!(Content { Empty })>,")
+            .into_token_stream()
+            .to_string();
+
+        assert!(!expanded.contains("pub enum Content"));
+        assert!(expanded.contains("Wrapper < type_macro ! (Content { Empty }) >"));
     }
 
     /// Generates same-name macros that recursively construct nested enum chains.

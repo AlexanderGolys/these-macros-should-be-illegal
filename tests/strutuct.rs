@@ -6,6 +6,10 @@ use these_macros_should_be_illegal::strutuct;
 /// Leaf payload used by the nested-struct consumer test.
 pub struct B(pub u8);
 
+/// Generic wrapper used to prove that generated declarations can be nested in type arguments.
+#[derive(Debug, PartialEq)]
+pub struct Delimited<T>(pub T);
+
 strutuct! {
     S
     a: A { A1, A2, A3 },
@@ -117,6 +121,16 @@ strutuct! {
         Nested { value: u8 },
         Unit,
     },
+}
+
+strutuct! {
+    #[derive(Debug, PartialEq)]
+    GenericContainer
+    #[derive(Clone, Eq)]
+    arguments: Delimited<Option<ArgumentListContent {
+        Empty,
+        Values(String),
+    }>>,
 }
 
 /// Verifies that nested declarations are emitted before their parent struct.
@@ -331,4 +345,29 @@ fn combines_inherited_and_local_derives() {
 
     assert_traits::<LiteralKind>();
     assert_traits::<LiteralKindNested>();
+}
+
+/// Hoists declarations nested inside arbitrarily deep ordinary generic arguments.
+#[test]
+fn generates_types_inside_generic_containers() {
+    fn assert_nested_traits<T>()
+    where
+        T: std::fmt::Debug + PartialEq + Clone + Eq,
+    {
+    }
+
+    assert_nested_traits::<ArgumentListContent>();
+
+    let value = GenericContainer!(
+        arguments: Delimited(Some(ArgumentListContent!(Values(
+            "argument".to_owned()
+        )))),
+    );
+
+    assert_eq!(
+        value,
+        GenericContainer {
+            arguments: Delimited(Some(ArgumentListContent::Values("argument".to_owned()))),
+        }
+    );
 }

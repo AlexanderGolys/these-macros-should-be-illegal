@@ -1,9 +1,11 @@
 //! Implementation of the `qf` function-like macro.
 
+use core::mem;
+
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{
-    PathArguments, Type, TypePath, parse_quote_spanned, parse2,
+    Error, PathArguments, Type, TypePath, parse_quote_spanned, parse2,
     visit_mut::{self, VisitMut},
 };
 
@@ -14,7 +16,7 @@ pub(crate) fn qualify_common(input: TokenStream) -> TokenStream {
         quote!(#ty)
     });
 
-    result.unwrap_or_else(syn::Error::into_compile_error)
+    result.unwrap_or_else(Error::into_compile_error)
 }
 
 /// Rewrites recognized single-segment type paths while preserving type arguments.
@@ -50,7 +52,7 @@ impl VisitMut for CommonTypeQualifier {
             "Arc" => parse_quote_spanned!(span=> ::std::sync::Arc),
             _ => return,
         };
-        let arguments = core::mem::replace(&mut segment.arguments, PathArguments::None);
+        let arguments = mem::replace(&mut segment.arguments, PathArguments::None);
         replacement
             .path
             .segments

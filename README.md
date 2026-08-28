@@ -109,6 +109,24 @@ apparently `.to_owned()` was too much ceremony:
 let greeting: String = literally_literal_string!(@@"hello");
 ```
 
+## Share match arms that Rust refuses to combine
+
+Rust or-pattern bindings must have one concrete type. `shared_match_arms!`
+uses `||` to clone the RHS into independent arms instead:
+
+```rust
+let trailing = shared_match_arms! {
+    match token {
+        TokenTree::Group(token) || TokenTree::Literal(token) =>
+            token.trailing_trivia().as_slice(),
+    }
+};
+```
+
+Use `(pattern if guard)` for a separately guarded component. Because this is a
+recursive function-like token transform, it also works through `expand!` over
+an out-of-line module.
+
 For syntax Rust cannot parse at item level, `expand!` loads an out-of-line module
 and applies the selected transformations before Rust sees its body:
 
@@ -239,6 +257,10 @@ A `derive` before an inline struct field adds to the family derives for that
 generated type and every declaration nested below it. Repeated traits are
 deduplicated. Generated enums use Rust's ordinary `#[default]` variant attribute
 to select their default value.
+
+Inline declarations may occur inside ordinary generic containers, so a field
+such as `Delimited<Option<ArgumentListContent { Empty, Value(String) }>>`
+hoists `ArgumentListContent` and leaves the surrounding type intact.
 
 Each generated type also gets a constructor macro in Rust's conveniently
 separate macro namespace. Every enum macro eats one path segment and calls the

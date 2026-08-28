@@ -84,7 +84,7 @@ dependencies = [
 
 [[package]]
 name = "these-macros-should-be-illegal"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "prettyplease",
  "proc-macro2",

@@ -1,15 +1,16 @@
 [package]
 name = "these-macros-should-be-illegal"
-version = "0.3.3"
+version = "0.3.4"
 edition.workspace = true
-description = "A personal collection of experimental Rust procedural macros"
+description = "Rust macros that you should never use"
 license = "MIT"
 homepage = "https://github.com/AlexanderGolys/these-macros-should-be-illegal"
 repository = "https://github.com/AlexanderGolys/these-macros-should-be-illegal"
 documentation = "https://docs.rs/these-macros-should-be-illegal"
 readme = "README.md"
 keywords = ["procedural-macro", "syntax", "experimental"]
-categories = ["development-tools::procedural-macro-helpers"]
+categories = ["development-tools", "rust-patterns"]
+authors = ["Alexander Golys <alexandergolys@gmail.com>"]
 
 [lib]
 proc-macro = true

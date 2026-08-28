@@ -122,6 +122,50 @@ impl ExpansionConfig {
         output
     }
 
+    /// Recursively transforms nested groups before transforming their containing stream.
+    pub(super) fn rewrite_bottom_up<F>(&self, input: TokenStream, transform: &F) -> TokenStream
+    where
+        F: Fn(&[TokenTree]) -> Option<(usize, TokenStream)>,
+    {
+        let tokens: Vec<_> = input.into_iter().collect();
+        let mut prepared = TokenStream::new();
+        let mut index = 0;
+
+        while index < tokens.len() {
+            if let Some(length) = self.opaque_prefix_length(&tokens[index..]) {
+                prepared.extend(tokens[index..index + length].iter().cloned());
+                index += length;
+                continue;
+            }
+
+            match tokens[index].clone() {
+                GroupTT(group) => {
+                    prepared.extend([GroupTT(self.rewrite_bottom_up_group(group, transform))]);
+                }
+                token => prepared.extend([token]),
+            }
+            index += 1;
+        }
+
+        let tokens: Vec<_> = prepared.into_iter().collect();
+        let mut output = TokenStream::new();
+        let mut index = 0;
+        while index < tokens.len() {
+            if let Some(length) = self.opaque_prefix_length(&tokens[index..]) {
+                output.extend(tokens[index..index + length].iter().cloned());
+                index += length;
+            } else if let Some((length, replacement)) = transform(&tokens[index..]) {
+                output.extend(replacement);
+                index += length;
+            } else {
+                output.extend([tokens[index].clone()]);
+                index += 1;
+            }
+        }
+
+        output
+    }
+
     /// Prefixes a macro input with this configuration's private inner attribute.
     pub(super) fn configure_input(&self, input: TokenStream) -> TokenStream {
         if self.is_empty() {
@@ -171,6 +215,19 @@ impl ExpansionConfig {
         F: Fn(&[TokenTree]) -> Option<(usize, TokenStream)>,
     {
         let mut rewritten = Group::new(group.delimiter(), self.rewrite(group.stream(), transform));
+        rewritten.set_span(group.span());
+        rewritten
+    }
+
+    /// Rebuilds a group after bottom-up recursive rewriting and preserves its span.
+    fn rewrite_bottom_up_group<F>(&self, group: Group, transform: &F) -> Group
+    where
+        F: Fn(&[TokenTree]) -> Option<(usize, TokenStream)>,
+    {
+        let mut rewritten = Group::new(
+            group.delimiter(),
+            self.rewrite_bottom_up(group.stream(), transform),
+        );
         rewritten.set_span(group.span());
         rewritten
     }
