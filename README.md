@@ -226,6 +226,14 @@ strutuct! {
 
 The same attribute before a variant overrides the declaration-wide setting.
 
+Ordinary field attributes are preserved, and root `derive`, `cfg`, and
+`cfg_attr` attributes are copied onto generated nested declarations. This keeps
+derive helpers such as `#[serde(flatten)]` usable across a nested type family.
+A `derive` before an inline struct field replaces the family default for that
+generated type and every declaration nested below it. `Default` remains
+family-wide across such overrides; generated enums use Rust's ordinary
+`#[default]` variant attribute to select their default value.
+
 Each generated type also gets a constructor macro in Rust's conveniently
 separate macro namespace. Every enum macro eats one path segment and calls the
 next one:

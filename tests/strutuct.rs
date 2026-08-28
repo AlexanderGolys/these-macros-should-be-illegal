@@ -1,5 +1,6 @@
 //! Consumer tests for nested algebraic declarations and constructor macros.
 
+use serde::Deserialize;
 use these_macros_should_be_illegal::strutuct;
 
 /// Leaf payload used by the nested-struct consumer test.
@@ -76,6 +77,29 @@ strutuct! {
     Packed(String, u8)
     #[strutuct(product_variants = true)]
     Generated { x: String, y: u8 }
+}
+
+strutuct! {
+    #[derive(Debug, Deserialize, PartialEq)]
+    SerdeSettings
+    #[serde(flatten)]
+    theme: SerdeTheme {
+        #[serde(default)]
+        label: Option<String>,
+        palette: SerdePalette { Light, Dark },
+    },
+}
+
+strutuct! {
+    #[derive(Debug, Default, PartialEq)]
+    DefaultFamily
+    settings: DefaultSettings {
+        choice: DefaultChoice {
+            #[default]
+            First,
+            Second,
+        },
+    },
 }
 
 /// Verifies that nested declarations are emitted before their parent struct.
@@ -229,4 +253,37 @@ fn configures_product_variants_with_outer_attributes() {
         RustVariants::Generated(RustVariantsGenerated { x: value, y: 4 })
             if value == "generated"
     ));
+}
+
+/// Propagates derives to nested types and preserves serde field attributes.
+#[test]
+fn supports_serde_attributes_across_nested_declarations() {
+    fn assert_deserialize<T>()
+    where
+        T: for<'de> Deserialize<'de>,
+    {
+    }
+
+    assert_deserialize::<SerdeSettings>();
+    assert_deserialize::<SerdeTheme>();
+    assert_deserialize::<SerdePalette>();
+    assert_eq!(
+        SerdeTheme {
+            label: None,
+            palette: SerdePalette::Light,
+        },
+        SerdeTheme {
+            label: None,
+            palette: SerdePalette::Light,
+        }
+    );
+}
+
+/// Uses Rust's ordinary default-variant attribute inside a derived family.
+#[test]
+fn derives_defaults_for_nested_structs_and_enums() {
+    assert_eq!(
+        DefaultFamily::default().settings.choice,
+        DefaultChoice::First
+    );
 }

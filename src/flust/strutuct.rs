@@ -3,11 +3,13 @@
 use proc_macro2::{Span, TokenStream};
 use quote::{ToTokens, quote};
 use syn::{
-    Attribute, Error, Ident, LitBool, LitStr, Token, Type,
+    Attribute, Error, Ident, LitBool, LitStr, Path, Token, Type,
     ext::IdentExt,
     parenthesized,
     parse::{Parse, ParseStream},
-    parse2,
+    parse_quote_spanned, parse2,
+    punctuated::Punctuated,
+    spanned::Spanned,
     token::{Brace, Paren},
 };
 
@@ -60,6 +62,8 @@ enum DeclarationBody {
 
 /// One public field of a generated struct.
 struct StructField {
+    /// Ordinary Rust attributes forwarded to the generated field.
+    attrs: Vec<Attribute>,
     /// Name retained for the generated Rust field.
     ident: Ident,
     /// Possibly nested or postfix-wrapped field type.
@@ -208,10 +212,115 @@ impl Parse for TypeExpression {
 pub(crate) fn strutuct(input: TokenStream) -> TokenStream {
     let result = split_config_prefix(input)
         .and_then(|(_, input)| parse2::<Invocation>(input))
-        .and_then(|invocation| lower_declaration(invocation.declaration, invocation.options))
+        .and_then(|mut invocation| {
+            let attrs = propagated_declaration_attrs(&invocation.declaration.attrs);
+            propagate_declaration_attrs(&mut invocation.declaration.body, &attrs);
+            lower_declaration(invocation.declaration, invocation.options)
+        })
         .map(|declaration| declaration.items.into_iter().collect());
 
     result.unwrap_or_else(Error::into_compile_error)
+}
+
+/// Selects root attributes that generated nested declarations must also carry.
+fn propagated_declaration_attrs(attrs: &[Attribute]) -> Vec<Attribute> {
+    attrs
+        .iter()
+        .filter(|attribute| {
+            attribute.path().is_ident("derive")
+                || attribute.path().is_ident("cfg")
+                || attribute.path().is_ident("cfg_attr")
+        })
+        .cloned()
+        .collect()
+}
+
+/// Reports whether an attribute declares one or more derived traits.
+fn is_derive(attribute: &Attribute) -> bool {
+    attribute.path().is_ident("derive")
+}
+
+/// Reports whether an ordinary derive list explicitly contains `Default`.
+fn derives_default(attribute: &Attribute) -> bool {
+    is_derive(attribute)
+        && attribute
+            .parse_args_with(Punctuated::<Path, Token![,]>::parse_terminated)
+            .is_ok_and(|derives| derives.iter().any(|derive| derive.is_ident("Default")))
+}
+
+/// Applies inherited declaration attributes to every nested generated type.
+fn propagate_declaration_attrs(body: &mut DeclarationBody, attrs: &[Attribute]) {
+    match body {
+        DeclarationBody::Struct(fields) => {
+            for field in fields {
+                propagate_type_attrs(&mut field.ty, attrs);
+            }
+        }
+        DeclarationBody::Tuple(fields) => {
+            for field in fields {
+                propagate_type_attrs(field, attrs);
+            }
+        }
+        DeclarationBody::Enum(variants) => {
+            for variant in variants {
+                match &mut variant.kind {
+                    EnumVariant::Implicit(ty) => propagate_type_attrs(ty, attrs),
+                    EnumVariant::Tuple { fields, .. } => {
+                        for field in fields {
+                            propagate_type_attrs(field, attrs);
+                        }
+                    }
+                    EnumVariant::Generated { declaration, .. } => {
+                        propagate_nested_declaration_attrs(declaration, attrs);
+                    }
+                    EnumVariant::Unit(_) => {}
+                }
+            }
+        }
+    }
+}
+
+/// Applies inherited attributes when a type expression defines a nested type.
+fn propagate_type_attrs(expression: &mut TypeExpression, attrs: &[Attribute]) {
+    if let TypeBase::Nested(declaration) = &mut expression.base {
+        propagate_nested_declaration_attrs(declaration, attrs);
+    }
+}
+
+/// Adds inherited attributes to one declaration and recursively visits its body.
+fn propagate_nested_declaration_attrs(declaration: &mut Declaration, attrs: &[Attribute]) {
+    let overrides_derive = declaration.attrs.iter().any(is_derive);
+    let overrides_default = declaration.attrs.iter().any(derives_default);
+    let mut retained_default = false;
+    let mut inherited = Vec::new();
+    for attribute in attrs {
+        if !is_derive(attribute) || !overrides_derive {
+            inherited.push(attribute.clone());
+        } else if !overrides_default && !retained_default && derives_default(attribute) {
+            inherited.push(parse_quote_spanned!(attribute.span()=> #[derive(Default)]));
+            retained_default = true;
+        }
+    }
+    for attribute in inherited.iter().rev() {
+        if !declaration.attrs.iter().any(|existing| {
+            existing.to_token_stream().to_string() == attribute.to_token_stream().to_string()
+        }) {
+            declaration.attrs.insert(0, attribute.clone());
+        }
+    }
+    let mut descendants = attrs
+        .iter()
+        .filter(|attribute| !is_derive(attribute))
+        .cloned()
+        .collect::<Vec<_>>();
+    descendants.extend(
+        declaration
+            .attrs
+            .iter()
+            .filter(|attribute| is_derive(attribute))
+            .cloned(),
+    );
+    propagate_declaration_attrs(&mut declaration.body, &descendants);
 }
 
 /// Consumes `strutuct` configuration attributes and retains ordinary Rust attributes.
@@ -292,6 +401,9 @@ fn begins_tuple_declaration(input: ParseStream) -> syn::Result<bool> {
 /// Reports whether the next member has the `field: Type` shape.
 fn begins_struct_field(input: ParseStream) -> bool {
     let fork = input.fork();
+    if fork.call(Attribute::parse_outer).is_err() {
+        return false;
+    }
     Ident::parse_any(&fork).is_ok() && fork.peek(Token![:])
 }
 
@@ -310,10 +422,27 @@ fn parse_struct_fields(input: ParseStream) -> syn::Result<Vec<StructField>> {
             return Err(input.error("expected a struct field in the form `name: Type`"));
         }
 
+        let mut attrs = input.call(Attribute::parse_outer)?;
         let ident = Ident::parse_any(input)?;
         input.parse::<Token![:]>()?;
-        let ty = input.parse()?;
-        fields.push(StructField { ident, ty });
+        let mut ty: TypeExpression = input.parse()?;
+        if let TypeBase::Nested(declaration) = &mut ty.base {
+            let mut field_attrs = Vec::with_capacity(attrs.len());
+            for attribute in attrs {
+                if is_derive(&attribute) {
+                    declaration.attrs.push(attribute);
+                } else {
+                    field_attrs.push(attribute);
+                }
+            }
+            attrs = field_attrs;
+        } else if let Some(derive) = attrs.iter().find(|attribute| is_derive(attribute)) {
+            return Err(Error::new_spanned(
+                derive,
+                "a local derive override requires an inline generated field type",
+            ));
+        }
+        fields.push(StructField { attrs, ident, ty });
 
         if !input.is_empty() {
             input.parse::<Token![,]>()?;
@@ -479,6 +608,7 @@ fn lower_struct(
     for field in fields {
         let lowered = lower_type(field.ty, options)?;
         items.extend(lowered.items);
+        let field_attrs = field.attrs;
         let field_ident = field.ident;
         let field_ty = lowered.ty;
         let field_documentation = LitStr::new(
@@ -486,6 +616,7 @@ fn lower_struct(
             field_ident.span(),
         );
         lowered_fields.push(quote! {
+            #(#field_attrs)*
             #[doc = #field_documentation]
             pub #field_ident: #field_ty
         });
@@ -701,6 +832,7 @@ fn lower_enum(
                         for field in fields {
                             let lowered = lower_type(field.ty, options)?;
                             items.extend(lowered.items);
+                            let field_attrs = field.attrs;
                             let field_ident = field.ident;
                             let field_ty = lowered.ty;
                             let field_documentation = LitStr::new(
@@ -710,6 +842,7 @@ fn lower_enum(
                                 field_ident.span(),
                             );
                             lowered_fields.push(quote! {
+                                #(#field_attrs)*
                                 #[doc = #field_documentation]
                                 #field_ident: #field_ty
                             });
@@ -997,6 +1130,47 @@ mod tests {
                 }
             "#,
         );
+    }
+
+    /// Replaces a family derive for one nested declaration and its descendants.
+    #[test]
+    fn local_derive_overrides_the_nested_branch() {
+        let expanded = expand(
+            "#[derive(Clone, Default)] Root #[derive(Debug)] branch: Branch { leaf: Leaf { value: String } },",
+        );
+        let derives_for = |name: &str| {
+            let mut derives = expanded
+                .items
+                .iter()
+                .find_map(|item| {
+                    let (ident, attrs) = match item {
+                        syn::Item::Enum(item) => (&item.ident, &item.attrs),
+                        syn::Item::Struct(item) => (&item.ident, &item.attrs),
+                        _ => return None,
+                    };
+                    (ident == name).then(|| {
+                        attrs
+                            .iter()
+                            .filter(|attribute| attribute.path().is_ident("derive"))
+                            .flat_map(|attribute| {
+                                attribute
+                                    .parse_args_with(
+                                        Punctuated::<Path, Token![,]>::parse_terminated,
+                                    )
+                                    .expect("derive paths")
+                            })
+                            .map(|derive| derive.to_token_stream().to_string())
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .expect("generated declaration");
+            derives.sort();
+            derives
+        };
+
+        assert_eq!(derives_for("Root"), ["Clone", "Default"]);
+        assert_eq!(derives_for("Branch"), ["Debug", "Default"]);
+        assert_eq!(derives_for("Leaf"), ["Debug", "Default"]);
     }
 
     /// Generates same-name macros that recursively construct nested enum chains.
