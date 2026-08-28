@@ -1,4 +1,4 @@
-//! External-module loading and function-like macro injection.
+//! Helper for external-module loading and function-like macro injection.
 
 use std::{fs, path::PathBuf};
 

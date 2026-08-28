@@ -25,7 +25,7 @@ pub(super) struct ExcludedMacros(
 
 /// Shared options carried through a chain of syntax-rewriting macros.
 #[derive(Clone, Default)]
-pub(super) struct ExpansionConfig {
+pub(crate) struct ExpansionConfig {
     /// Macro invocations excluded from recursive rewriting.
     excluded_macros: ExcludedMacros,
 }
@@ -91,7 +91,7 @@ impl ExpansionConfig {
     }
 
     /// Recursively applies a token transform while preserving opaque token regions.
-    pub(super) fn rewrite<F>(&self, input: TokenStream, transform: &F) -> TokenStream
+    pub(crate) fn rewrite<F>(&self, input: TokenStream, transform: &F) -> TokenStream
     where
         F: Fn(&[TokenTree]) -> Option<(usize, TokenStream)>,
     {
@@ -123,7 +123,7 @@ impl ExpansionConfig {
     }
 
     /// Recursively transforms nested groups before transforming their containing stream.
-    pub(super) fn rewrite_bottom_up<F>(&self, input: TokenStream, transform: &F) -> TokenStream
+    pub(crate) fn rewrite_bottom_up<F>(&self, input: TokenStream, transform: &F) -> TokenStream
     where
         F: Fn(&[TokenTree]) -> Option<(usize, TokenStream)>,
     {
@@ -261,7 +261,7 @@ pub(super) fn parse_config_option(
 }
 
 /// Removes and parses a leading private configuration attribute, when present.
-pub(super) fn split_config_prefix(
+pub(crate) fn split_config_prefix(
     input: TokenStream,
 ) -> syn::Result<(ExpansionConfig, TokenStream)> {
     let tokens: Vec<_> = input.into_iter().collect();
@@ -298,12 +298,12 @@ pub(super) fn split_config_prefix(
 }
 
 /// Reports whether a token is punctuation with the requested character.
-pub(super) fn is_punctuation(token: &TokenTree, expected: char) -> bool {
+pub(crate) fn is_punctuation(token: &TokenTree, expected: char) -> bool {
     matches!(token, PunctTT(punctuation) if punctuation.as_char() == expected)
 }
 
 /// Reports whether a token is joint punctuation with the requested character.
-pub(super) fn is_joint_punctuation(token: &TokenTree, expected: char) -> bool {
+pub(crate) fn is_joint_punctuation(token: &TokenTree, expected: char) -> bool {
     matches!(token, PunctTT(punctuation) if punctuation.as_char() == expected && punctuation.spacing() == Spacing::Joint)
 }
 

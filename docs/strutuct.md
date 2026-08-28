@@ -1,7 +1,26 @@
 # `strutuct!`
 
 `strutuct!` keeps small related types where they are used, then hoists them into
-ordinary public Rust declarations in dependency order.
+ordinary Rust declarations in dependency order. Generated declarations and
+fields are public by default. `emmun!` is an exact alias with the same syntax.
+
+Outer attributes can configure the complete generated family through
+[`forward_attributes`](forward-attributes.md):
+
+```rust
+# #![allow(clippy::needless_doctest_main)]
+use these_macros_should_be_illegal::{forward_attributes, strutuct};
+
+#[forward_attributes]
+#[derive(Debug, PartialEq)]
+strutuct! {
+    Forwarded { First, Second }
+}
+
+fn main() {
+    assert_eq!(Forwarded::First, Forwarded::First);
+}
+```
 
 ```rust
 use these_macros_should_be_illegal::strutuct;
@@ -33,6 +52,25 @@ The body shape decides what gets generated:
 
 Nested `{ ... }` bodies use the same rules recursively.
 
+The root body may either follow its name directly or use ordinary declaration
+braces. Optional `struct` and `enum` keywords make the input look more like Rust;
+shape inference still decides the output, and a mismatched keyword is diagnosed:
+
+```rust
+use these_macros_should_be_illegal::strutuct;
+
+strutuct! {
+    pub struct Request {
+        method: enum Method { Get, Post, Delete },
+        body: String?,
+    }
+}
+```
+
+Standard Rust visibility forms and `priv` are accepted before generated
+declarations and named fields. `priv` is the explicit private counterpart to
+the macro's default-public behavior.
+
 Nested declarations can also appear inside ordinary generic types. The generated
 type is hoisted as usual, while the surrounding container stays untouched:
 
@@ -62,6 +100,10 @@ assert!(matches!(
 This works recursively through generic arguments, tuples, arrays, references,
 and other grouped type syntax. A declaration inside a type macro invocation is
 left to that macro instead of being hoisted by `strutuct!`.
+
+Keywords, visibility, attributes, and local configuration work inside generic
+arguments as well. For example, `Vec<priv enum Choice { A, B }>` hoists a private
+`Choice` enum and leaves the field type as `Vec<Choice>`.
 
 ## Enum grammar
 
@@ -129,13 +171,46 @@ strutuct! {
 The same configuration attribute before a variant overrides the family
 setting for that variant.
 
+## Configuration and visibility
+
+Every option can be set on the root declaration or locally before one field or
+variant branch:
+
+```rust
+use these_macros_should_be_illegal::strutuct;
+
+strutuct! {
+    #[strutuct(public = false, reverse_concat = true)]
+    struct Syntax {
+        hidden: enum Hidden { A, B },
+        #[strutuct(public = true)]
+        pub visible: pub enum Visible { A, B },
+    }
+}
+```
+
+The available options are:
+
+- `product_variants = true | false` selects packed products versus ordinary
+  multi-field enum variants;
+- `public = true | false` selects the default visibility for that declaration
+  branch; `false` restores Rust's ordinary private-by-default behavior;
+- `reverse_concat = true | false` reverses every automatically concatenated
+  name in that branch. For example, `ParentName` becomes `NameParent`, while
+  explicit names between `|...|` stay unchanged.
+
+An explicit `pub`, restricted `pub(...)`, or `priv` wins for that individual
+declaration or field. Local configuration is inherited by generated declarations
+below that object, while siblings retain their surrounding configuration.
+
 ## Option, box, attributes, and derives
 
 Postfix `T?` and `T*` become `Option<T>` and `Box<T>`. Wrapped edges stop
 constructor-macro recursion, which makes `T*` useful for recursive families.
 
-Root `derive`, `cfg`, and `cfg_attr` attributes propagate to generated nested
-declarations. Ordinary field attributes remain on their fields. A `derive`
+All ordinary root declaration attributes propagate to generated nested
+declarations. This includes `derive`, `cfg`, `cfg_attr`, and third-party
+attributes. Ordinary field attributes remain on their fields. A `derive`
 before an inline generated struct field adds traits for that declaration and
 every generated declaration below it:
 
@@ -168,9 +243,10 @@ strutuct! {
 }
 ```
 
-A doc comment written above `strutuct!` belongs to the macro invocation itself.
-Function-like procedural macros receive only the tokens inside their delimiters,
-so `strutuct!` cannot recover or forward that outer comment.
+A doc comment written above a bare `strutuct!` belongs to the macro invocation
+itself. Put [`forward_attributes`](forward-attributes.md) before the invocation's
+other active attributes when those attributes should configure and propagate
+through the generated family.
 
 ## Constructor paths
 

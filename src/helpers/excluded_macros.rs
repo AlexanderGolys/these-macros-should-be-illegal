@@ -1,4 +1,4 @@
-//! Implementation of the attribute that adds macro names to the opaque set.
+//! Helper attribute that adds macro names to the opaque preprocessing set.
 
 use proc_macro2::TokenStream;
 use quote::quote;

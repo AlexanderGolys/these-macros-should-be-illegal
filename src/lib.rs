@@ -1,16 +1,19 @@
 //! Experimental procedural macros that are too entertaining not to try.
 
-/// Procedural-macro implementations and their shared token preprocessing.
+/// Whole-stream grammar extensions applied recursively before parsing.
 mod flust;
-/// Implements qualification of common unqualified standard-library types.
-mod mbe;
+/// Reusable plumbing for composing and configuring macros.
+mod helpers;
+/// Shape-aware local syntax extensions and replacement grammars.
+mod metalust;
+/// Small conveniences over otherwise ordinary Rust syntax.
+mod rast;
 
-use flust::{
-    discriminated_str_impl, excluded_macros_impl, expand_impl, literally_literal_string_impl,
-    shared_match_arms_impl, strutuct_impl,
-};
-use mbe::qualify_common as qualify_common_impl;
+use flust::{literally_literal_string_impl, shared_match_arms_impl};
+use helpers::{excluded_macros_impl, expand_impl, forward_attributes_impl};
+use metalust::{discriminated_str_impl, strutuct_impl};
 use proc_macro::TokenStream;
+use rast::qualify_common_impl;
 
 /// Rewrites literal strings in exactly the supplied token stream.
 #[proc_macro]
@@ -78,8 +81,20 @@ pub fn expand(input: TokenStream) -> TokenStream {
     expand_impl(input.into()).into()
 }
 
-/// Generates one struct or enum together with all syntactically nested declarations.
+#[doc = include_str!("../docs/forward-attributes.md")]
+#[proc_macro_attribute]
+pub fn forward_attributes(arguments: TokenStream, item: TokenStream) -> TokenStream {
+    forward_attributes_impl(arguments.into(), item.into()).into()
+}
+
+#[doc = include_str!("../docs/strutuct.md")]
 #[proc_macro]
 pub fn strutuct(input: TokenStream) -> TokenStream {
+    strutuct_impl(input.into()).into()
+}
+
+/// Expands exactly like [`strutuct!`](strutuct).
+#[proc_macro]
+pub fn emmun(input: TokenStream) -> TokenStream {
     strutuct_impl(input.into()).into()
 }

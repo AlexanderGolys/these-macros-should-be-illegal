@@ -5,8 +5,8 @@ use quote::quote;
 use syn::{Error, LitStr, parse2};
 
 #[cfg(test)]
-use super::preprocessing::ExpansionConfig;
-use super::preprocessing::{is_joint_punctuation, is_punctuation, split_config_prefix};
+use crate::helpers::preprocessing::ExpansionConfig;
+use crate::helpers::preprocessing::{is_joint_punctuation, is_punctuation, split_config_prefix};
 
 /// Rewrites extended literal-string syntax in a procedural macro's input.
 pub(crate) fn literally_literal_string(input: TokenStream) -> TokenStream {

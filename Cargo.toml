@@ -1,6 +1,6 @@
 [package]
 name = "these-macros-should-be-illegal"
-version = "0.3.4"
+version = "0.3.5"
 edition.workspace = true
 description = "Rust macros that you should never use"
 license = "MIT"

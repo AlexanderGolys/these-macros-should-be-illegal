@@ -1,4 +1,4 @@
-//! Implementation of the `qf` function-like macro.
+//! Almost-ordinary Rust type qualification for the `qf!` macro.
 
 use core::mem;
 

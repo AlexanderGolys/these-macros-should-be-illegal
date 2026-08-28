@@ -53,14 +53,34 @@ assert_eq!(
 
 ## Declare small algebraic type families together
 
-`strutuct!` lets you write the little types where they are actually used. It
-pulls them out into normal Rust declarations and generates constructor macros:
+`strutuct!` (also available as the wonderfully backward `emmun!`) lets you write
+the little types where they are actually used. It pulls them out into normal
+Rust declarations and generates constructor macros:
+
+```rust
+use these_macros_should_be_illegal::{forward_attributes, strutuct};
+
+#[forward_attributes]
+#[derive(Debug, PartialEq)]
+strutuct! {
+    Status { Ready, Waiting }
+}
+
+assert_eq!(format!("{:?}", Status::Ready), "Ready");
+```
+
+`forward_attributes` moves every remaining outer attribute behind a `;` inside
+the function-like invocation. The invoked macro owns their meaning; `strutuct!`
+uses them as inherited attributes and configuration for the generated family.
+It must be the first active attribute, because an active attribute placed before
+it gets an opportunity to fail first. Macro input stays completely opaque.
 
 ```rust
 strutuct! {
-    Request
-    method: Method { Get, Post, Delete },
-    body: String?,
+    pub struct Request {
+        method: enum Method { Get, Post, Delete },
+        body: String?,
+    }
 }
 
 let request = Request!(
@@ -202,6 +222,11 @@ If the body starts like `name: Type`, it is a struct. One parenthesized product
 with at least two elements is a tuple struct. Everything else is an enum.
 Nested declarations come out before the declarations using them.
 
+The root body may be wrapped in braces, and optional `struct`/`enum` keywords
+are checked against the shape inferred from its members. Standard visibility
+and `priv` work on generated declarations and fields. Use
+`#[strutuct(public = false)]` for ordinary private-by-default Rust visibility.
+
 Inside an enum, parentheses refer to terminal payload types that already exist.
 Vertical bars declare the generated payload type's name. Without a body, a
 bar-named declaration generates a nominal unit type (the `()` case, not `!`):
@@ -250,8 +275,12 @@ strutuct! {
 
 The same attribute before a variant overrides the declaration-wide setting.
 
-Ordinary field attributes are preserved, and root `derive`, `cfg`, and
-`cfg_attr` attributes are copied onto generated nested declarations. This keeps
+`#[strutuct(reverse_concat = true)]` reverses automatically generated names,
+turning `ParentName` into `NameParent`. All configuration options can be applied
+to the whole family or locally before one field or variant branch.
+
+Ordinary field attributes are preserved, and every ordinary root declaration
+attribute is copied onto generated nested declarations. This keeps
 derive helpers such as `#[serde(flatten)]` usable across a nested type family.
 A `derive` before an inline struct field adds to the family derives for that
 generated type and every declaration nested below it. Repeated traits are
@@ -260,7 +289,8 @@ to select their default value.
 
 Inline declarations may occur inside ordinary generic containers, so a field
 such as `Delimited<Option<ArgumentListContent { Empty, Value(String) }>>`
-hoists `ArgumentListContent` and leaves the surrounding type intact.
+hoists `ArgumentListContent` and leaves the surrounding type intact. The more
+Rust-like `Vec<enum Element { A, B }>` spelling works too.
 
 Each generated type also gets a constructor macro in Rust's conveniently
 separate macro namespace. Every enum macro eats one path segment and calls the

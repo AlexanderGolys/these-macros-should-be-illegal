@@ -1,13 +1,13 @@
-//! Nested algebraic data declarations for the `strutuct!` macro.
+//! Nested algebraic declarations replacing one ordinary Rust item shape.
 
 use proc_macro2::{Group, Span, TokenStream, TokenTree};
 use quote::{ToTokens, quote};
 use syn::{
-    Attribute, Error, Ident, LitBool, LitStr, Path, Token, Type,
+    Attribute, Error, Ident, LitBool, LitStr, Path, Token, Type, Visibility,
     ext::IdentExt,
     parenthesized,
     parse::{Parse, ParseStream},
-    parse_quote_spanned, parse2,
+    parse_quote, parse_quote_spanned, parse2,
     punctuated::Punctuated,
     spanned::Spanned,
     token::{Brace, Paren},
@@ -15,12 +15,10 @@ use syn::{
 
 use TokenTree::{Group as GroupTT, Ident as IdentTT, Punct as PunctTT};
 
-use super::preprocessing::split_config_prefix;
+use crate::helpers::preprocessing::split_config_prefix;
 
 /// One complete invocation with declaration-local lowering options.
 struct Invocation {
-    /// Options consumed from the root declaration's `strutuct` attribute.
-    options: Options,
     /// Root algebraic declaration.
     declaration: Declaration,
 }
@@ -30,6 +28,21 @@ struct Invocation {
 struct Options {
     /// Whether non-unit enum variants carry one explicit product value.
     product_variants: bool,
+    /// Whether generated declarations and fields are public by default.
+    public: bool,
+    /// Whether every existing identifier concatenation is emitted in reverse order.
+    reverse_concat: bool,
+}
+
+/// Options explicitly overridden on one declaration, field, or variant branch.
+#[derive(Clone, Copy, Default)]
+struct OptionOverrides {
+    /// Per-object override for unary product variants.
+    product_variants: Option<bool>,
+    /// Per-object override for default public visibility.
+    public: Option<bool>,
+    /// Per-object override for identifier concatenation order.
+    reverse_concat: Option<bool>,
 }
 
 /// Supplies the default algebraic lowering behavior.
@@ -38,6 +51,31 @@ impl Default for Options {
     fn default() -> Self {
         Self {
             product_variants: true,
+            public: true,
+            reverse_concat: false,
+        }
+    }
+}
+
+/// Applies local overrides while retaining inherited family options.
+impl Options {
+    /// Returns a copy updated by every option explicitly set on one object.
+    fn with(self, overrides: OptionOverrides) -> Self {
+        Self {
+            product_variants: overrides.product_variants.unwrap_or(self.product_variants),
+            public: overrides.public.unwrap_or(self.public),
+            reverse_concat: overrides.reverse_concat.unwrap_or(self.reverse_concat),
+        }
+    }
+}
+
+impl OptionOverrides {
+    /// Combines inherited and local overrides, preferring the local values.
+    fn with(self, local: Self) -> Self {
+        Self {
+            product_variants: local.product_variants.or(self.product_variants),
+            public: local.public.or(self.public),
+            reverse_concat: local.reverse_concat.or(self.reverse_concat),
         }
     }
 }
@@ -46,6 +84,10 @@ impl Default for Options {
 struct Declaration {
     /// Ordinary Rust attributes forwarded to the generated declaration.
     attrs: Vec<Attribute>,
+    /// Configuration inherited by this declaration and its nested branch.
+    options: OptionOverrides,
+    /// Explicit Rust visibility, with inherited visibility representing `priv`.
+    visibility: Option<Visibility>,
     /// Name of the generated Rust type.
     ident: Ident,
     /// Struct fields or enum variants belonging to the declaration.
@@ -68,6 +110,10 @@ enum DeclarationBody {
 struct StructField {
     /// Ordinary Rust attributes forwarded to the generated field.
     attrs: Vec<Attribute>,
+    /// Configuration applied to this field and declarations nested in its type.
+    options: OptionOverrides,
+    /// Explicit field visibility, with inherited visibility representing `priv`.
+    visibility: Option<Visibility>,
     /// Name retained for the generated Rust field.
     ident: Ident,
     /// Possibly nested or postfix-wrapped field type.
@@ -78,8 +124,10 @@ struct StructField {
 struct ParsedEnumVariant {
     /// Ordinary Rust attributes forwarded to the generated variant.
     attrs: Vec<Attribute>,
-    /// Per-variant override for unary product lowering.
-    product_variants: Option<bool>,
+    /// Configuration applied to this variant and its generated payload branch.
+    options: OptionOverrides,
+    /// Visibility applied to an inline payload declaration owned by this variant.
+    visibility: Option<Visibility>,
     /// Syntactic form of the variant.
     kind: EnumVariant,
 }
@@ -118,6 +166,14 @@ struct TypeExpression {
 struct InlineDeclaration {
     /// Parsed declaration returned to the containing type expression.
     declaration: Declaration,
+    /// Tokens following the inline declaration in its containing Rust type.
+    remaining: TokenStream,
+}
+
+/// Whether a Rust-type suffix starts with the extended declaration grammar.
+struct InlineDeclarationProbe {
+    /// Result of checking the suffix before consuming it as unrestricted tokens.
+    begins: bool,
 }
 
 /// The unwrapped portion of a field or variant type.
@@ -154,6 +210,15 @@ enum DeclarationKind {
     Enum,
 }
 
+/// Optional Rust-like keyword used only to validate an inferred declaration shape.
+#[derive(Clone, Copy)]
+enum DeclarationKeyword {
+    /// Requires an inferred unit, named-field, or tuple struct.
+    Struct(Span),
+    /// Requires an inferred enum.
+    Enum(Span),
+}
+
 /// Fully lowered declaration together with its generated items.
 struct LoweredDeclaration {
     /// Generated items ordered with dependencies before their consumers.
@@ -183,15 +248,30 @@ impl Parse for Invocation {
     /// Parses declaration attributes, options, the root name, and its body.
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let mut attrs = input.call(Attribute::parse_outer)?;
-        let options = Options {
-            product_variants: take_product_variants(&mut attrs)?.unwrap_or(true),
+        let invocation_options = take_options(&mut attrs)?;
+        let options = if input.peek(Token![;]) {
+            input.parse::<Token![;]>()?;
+            let mut declaration_attrs = input.call(Attribute::parse_outer)?;
+            let declaration_options = take_options(&mut declaration_attrs)?;
+            attrs.extend(declaration_attrs);
+            invocation_options.with(declaration_options)
+        } else {
+            invocation_options
         };
+        let visibility = parse_visibility(input)?;
+        let keyword = parse_declaration_keyword(input)?;
         let ident = Ident::parse_any(input)?;
-        let declaration = parse_declaration(attrs, ident, input)?;
-        Ok(Self {
-            options,
-            declaration,
-        })
+        let declaration = if input.peek(Brace) {
+            let content;
+            syn::braced!(content in input);
+            if !input.is_empty() {
+                return Err(input.error("unexpected tokens after braced root declaration"));
+            }
+            parse_declaration(attrs, options, visibility, keyword, ident, &content)?
+        } else {
+            parse_declaration(attrs, options, visibility, keyword, ident, input)?
+        };
+        Ok(Self { declaration })
     }
 }
 
@@ -199,17 +279,9 @@ impl Parse for Invocation {
 impl Parse for TypeExpression {
     /// Parses the base type before consuming left-associative postfix wrappers.
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let (base, wrappers) = if input.peek(Token![|]) {
+        let (base, wrappers) = if begins_inline_declaration(input) {
             (
-                TypeBase::Nested(Box::new(parse_named_declaration(input)?)),
-                parse_type_wrappers(input)?,
-            )
-        } else if begins_nested_declaration(input) {
-            let ident = Ident::parse_any(input)?;
-            let content;
-            syn::braced!(content in input);
-            (
-                TypeBase::Nested(Box::new(parse_declaration(Vec::new(), ident, &content)?)),
+                TypeBase::Nested(Box::new(parse_inline_declaration(input)?)),
                 parse_type_wrappers(input)?,
             )
         } else {
@@ -222,15 +294,85 @@ impl Parse for TypeExpression {
 
 /// Parses an identifier followed by its complete inline declaration body.
 impl Parse for InlineDeclaration {
-    /// Parses the generated type name and infers the shape of its braced body.
+    /// Parses one generated declaration and retains the containing type suffix.
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let ident = Ident::parse_any(input)?;
-        let content;
-        syn::braced!(content in input);
         Ok(Self {
-            declaration: parse_declaration(Vec::new(), ident, &content)?,
+            declaration: parse_inline_declaration(input)?,
+            remaining: input.parse()?,
         })
     }
+}
+
+/// Probes a complete suffix while leaving semantic parsing to `InlineDeclaration`.
+impl Parse for InlineDeclarationProbe {
+    /// Records whether the suffix begins with a declaration, then consumes the suffix.
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let begins = begins_inline_declaration(input);
+        let _: TokenStream = input.parse()?;
+        Ok(Self { begins })
+    }
+}
+
+/// Parses explicit Rust visibility or the DSL's private `priv` marker.
+fn parse_visibility(input: ParseStream) -> syn::Result<Option<Visibility>> {
+    let fork = input.fork();
+    if let Ok(identifier) = Ident::parse_any(&fork)
+        && identifier == "priv"
+    {
+        Ident::parse_any(input)?;
+        return Ok(Some(Visibility::Inherited));
+    }
+
+    let visibility: Visibility = input.parse()?;
+    Ok((!matches!(visibility, Visibility::Inherited)).then_some(visibility))
+}
+
+/// Consumes an optional decorative `struct` or `enum` keyword.
+fn parse_declaration_keyword(input: ParseStream) -> syn::Result<Option<DeclarationKeyword>> {
+    if input.peek(Token![struct]) {
+        let token = input.parse::<Token![struct]>()?;
+        Ok(Some(DeclarationKeyword::Struct(token.span)))
+    } else if input.peek(Token![enum]) {
+        let token = input.parse::<Token![enum]>()?;
+        Ok(Some(DeclarationKeyword::Enum(token.span)))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Reports whether the next tokens describe an inline generated declaration.
+fn begins_inline_declaration(input: ParseStream) -> bool {
+    let fork = input.fork();
+    let Ok(mut attrs) = fork.call(Attribute::parse_outer) else {
+        return false;
+    };
+    if take_options(&mut attrs).is_err()
+        || parse_visibility(&fork).is_err()
+        || parse_declaration_keyword(&fork).is_err()
+    {
+        return false;
+    }
+    if fork.peek(Token![|]) {
+        return true;
+    }
+    Ident::parse_any(&fork).is_ok() && fork.peek(Brace)
+}
+
+/// Parses one inline declaration with its own attributes, options, and visibility.
+fn parse_inline_declaration(input: ParseStream) -> syn::Result<Declaration> {
+    let mut attrs = input.call(Attribute::parse_outer)?;
+    let options = take_options(&mut attrs)?;
+    let visibility = parse_visibility(input)?;
+    let keyword = parse_declaration_keyword(input)?;
+
+    if input.peek(Token![|]) {
+        return parse_named_declaration(input, attrs, options, visibility, keyword);
+    }
+
+    let ident = Ident::parse_any(input)?;
+    let content;
+    syn::braced!(content in input);
+    parse_declaration(attrs, options, visibility, keyword, ident, &content)
 }
 
 /// Parses postfix ownership wrappers that follow a directly nested declaration.
@@ -298,15 +440,15 @@ fn rewrite_nested_type_declarations(
     let mut index = 0;
 
     while index < tokens.len() {
-        if let Some(length) = opaque_type_prefix_length(&tokens[index..]) {
-            output.extend(tokens[index..index + length].iter().cloned());
+        if let Some((length, declaration)) = parse_inline_type_declaration(&tokens[index..])? {
+            output.extend([IdentTT(declaration.ident.clone())]);
+            declarations.push(declaration);
             index += length;
             continue;
         }
 
-        if let Some((length, declaration)) = parse_inline_type_declaration(&tokens[index..])? {
-            output.extend([IdentTT(declaration.ident.clone())]);
-            declarations.push(declaration);
+        if let Some(length) = opaque_type_prefix_length(&tokens[index..]) {
+            output.extend(tokens[index..index + length].iter().cloned());
             index += length;
             continue;
         }
@@ -356,44 +498,13 @@ fn opaque_type_prefix_length(tokens: &[TokenTree]) -> Option<usize> {
 fn parse_inline_type_declaration(
     tokens: &[TokenTree],
 ) -> syn::Result<Option<(usize, Declaration)>> {
-    if let (Some(IdentTT(ident)), Some(GroupTT(body))) = (tokens.first(), tokens.get(1))
-        && body.delimiter() == proc_macro2::Delimiter::Brace
-    {
-        let declaration = parse_braced_type_declaration(ident, body)?;
-        return Ok(Some((2, declaration)));
+    let input: TokenStream = tokens.iter().cloned().collect();
+    if !parse2::<InlineDeclarationProbe>(input.clone())?.begins {
+        return Ok(None);
     }
-
-    if matches!(tokens.first(), Some(PunctTT(punctuation)) if punctuation.as_char() == '|')
-        && let Some(IdentTT(ident)) = tokens.get(1)
-        && matches!(tokens.get(2), Some(PunctTT(punctuation)) if punctuation.as_char() == '|')
-    {
-        if let Some(GroupTT(body)) = tokens.get(3)
-            && body.delimiter() == proc_macro2::Delimiter::Brace
-        {
-            let declaration = parse_braced_type_declaration(ident, body)?;
-            return Ok(Some((4, declaration)));
-        }
-        return Ok(Some((
-            3,
-            Declaration {
-                attrs: Vec::new(),
-                ident: ident.clone(),
-                body: DeclarationBody::Unit,
-            },
-        )));
-    }
-
-    Ok(None)
-}
-
-/// Parses a name and brace group as one complete inline declaration.
-fn parse_braced_type_declaration(ident: &Ident, body: &Group) -> syn::Result<Declaration> {
-    let parsed = parse2::<InlineDeclaration>(
-        [IdentTT(ident.clone()), GroupTT(body.clone())]
-            .into_iter()
-            .collect(),
-    )?;
-    Ok(parsed.declaration)
+    let parsed = parse2::<InlineDeclaration>(input)?;
+    let consumed = tokens.len() - parsed.remaining.into_iter().count();
+    Ok(Some((consumed, parsed.declaration)))
 }
 
 /// Expands one nested algebraic declaration into ordinary Rust items.
@@ -403,7 +514,7 @@ pub(crate) fn strutuct(input: TokenStream) -> TokenStream {
         .and_then(|mut invocation| {
             let attrs = propagated_declaration_attrs(&invocation.declaration.attrs);
             propagate_declaration_attrs(&mut invocation.declaration.body, &attrs)?;
-            lower_declaration(invocation.declaration, invocation.options)
+            lower_declaration(invocation.declaration, Options::default())
         })
         .map(|declaration| declaration.items.into_iter().collect());
 
@@ -412,15 +523,7 @@ pub(crate) fn strutuct(input: TokenStream) -> TokenStream {
 
 /// Selects root attributes that generated nested declarations must also carry.
 fn propagated_declaration_attrs(attrs: &[Attribute]) -> Vec<Attribute> {
-    attrs
-        .iter()
-        .filter(|attribute| {
-            attribute.path().is_ident("derive")
-                || attribute.path().is_ident("cfg")
-                || attribute.path().is_ident("cfg_attr")
-        })
-        .cloned()
-        .collect()
+    attrs.to_vec()
 }
 
 /// Reports whether an attribute declares one or more derived traits.
@@ -540,9 +643,8 @@ fn propagate_nested_declaration_attrs(
 }
 
 /// Consumes `strutuct` configuration attributes and retains ordinary Rust attributes.
-fn take_product_variants(attrs: &mut Vec<Attribute>) -> syn::Result<Option<bool>> {
-    let mut product_variants = None;
-    let mut configured = false;
+fn take_options(attrs: &mut Vec<Attribute>) -> syn::Result<OptionOverrides> {
+    let mut options = OptionOverrides::default();
     let mut retained = Vec::with_capacity(attrs.len());
 
     for attribute in attrs.drain(..) {
@@ -550,32 +652,34 @@ fn take_product_variants(attrs: &mut Vec<Attribute>) -> syn::Result<Option<bool>
             retained.push(attribute);
             continue;
         }
-        if configured {
-            return Err(Error::new_spanned(
-                attribute,
-                "duplicate `strutuct` configuration attribute",
-            ));
-        }
-        configured = true;
         attribute.parse_nested_meta(|meta| {
-            if !meta.path.is_ident("product_variants") {
+            let slot = if meta.path.is_ident("product_variants") {
+                &mut options.product_variants
+            } else if meta.path.is_ident("public") {
+                &mut options.public
+            } else if meta.path.is_ident("reverse_concat") {
+                &mut options.reverse_concat
+            } else {
                 return Err(meta.error("unknown `strutuct` option"));
+            };
+            if slot.is_some() {
+                return Err(meta.error("duplicate `strutuct` option"));
             }
-            if product_variants.is_some() {
-                return Err(meta.error("duplicate `product_variants` option"));
-            }
-            product_variants = Some(meta.value()?.parse::<LitBool>()?.value);
+            *slot = Some(meta.value()?.parse::<LitBool>()?.value);
             Ok(())
         })?;
     }
 
     *attrs = retained;
-    Ok(product_variants)
+    Ok(options)
 }
 
 /// Parses a declaration body after its name and infers its algebraic shape.
 fn parse_declaration(
     attrs: Vec<Attribute>,
+    options: OptionOverrides,
+    visibility: Option<Visibility>,
+    keyword: Option<DeclarationKeyword>,
     ident: Ident,
     input: ParseStream,
 ) -> syn::Result<Declaration> {
@@ -591,10 +695,47 @@ fn parse_declaration(
     } else if begins_tuple_declaration(input)? {
         DeclarationBody::Tuple(parse_tuple_fields(input)?)
     } else {
-        DeclarationBody::Enum(parse_enum_variants(&ident, input)?)
+        DeclarationBody::Enum(parse_enum_variants(input)?)
     };
+    validate_declaration_keyword(keyword, &body)?;
 
-    Ok(Declaration { attrs, ident, body })
+    Ok(Declaration {
+        attrs,
+        options,
+        visibility,
+        ident,
+        body,
+    })
+}
+
+/// Checks a decorative keyword against the independently inferred declaration shape.
+fn validate_declaration_keyword(
+    keyword: Option<DeclarationKeyword>,
+    body: &DeclarationBody,
+) -> syn::Result<()> {
+    let Some(keyword) = keyword else {
+        return Ok(());
+    };
+    let matches = matches!(
+        (keyword, body),
+        (
+            DeclarationKeyword::Struct(_),
+            DeclarationBody::Unit | DeclarationBody::Struct(_) | DeclarationBody::Tuple(_)
+        ) | (DeclarationKeyword::Enum(_), DeclarationBody::Enum(_))
+    );
+    if matches {
+        return Ok(());
+    }
+
+    let (span, expected, inferred) = match (keyword, body) {
+        (DeclarationKeyword::Struct(span), DeclarationBody::Enum(_)) => (span, "struct", "enum"),
+        (DeclarationKeyword::Enum(span), _) => (span, "enum", "struct"),
+        _ => return Ok(()),
+    };
+    Err(Error::new(
+        span,
+        format!("`{expected}` does not match the inferred {inferred} declaration"),
+    ))
 }
 
 /// Reports whether the complete body is one product containing at least two types.
@@ -620,13 +761,10 @@ fn begins_struct_field(input: ParseStream) -> bool {
     if fork.call(Attribute::parse_outer).is_err() {
         return false;
     }
+    if parse_visibility(&fork).is_err() {
+        return false;
+    }
     Ident::parse_any(&fork).is_ok() && fork.peek(Token![:])
-}
-
-/// Reports whether the next type is a simple name followed by a declaration body.
-fn begins_nested_declaration(input: ParseStream) -> bool {
-    let fork = input.fork();
-    Ident::parse_any(&fork).is_ok() && fork.peek(Brace)
 }
 
 /// Parses comma-separated fields and rejects enum-shaped members in a struct.
@@ -639,6 +777,8 @@ fn parse_struct_fields(input: ParseStream) -> syn::Result<Vec<StructField>> {
         }
 
         let mut attrs = input.call(Attribute::parse_outer)?;
+        let options = take_options(&mut attrs)?;
+        let visibility = parse_visibility(input)?;
         let ident = Ident::parse_any(input)?;
         input.parse::<Token![:]>()?;
         let mut ty: TypeExpression = input.parse()?;
@@ -661,7 +801,13 @@ fn parse_struct_fields(input: ParseStream) -> syn::Result<Vec<StructField>> {
                 "a local derive requires an inline generated field type",
             ));
         }
-        fields.push(StructField { attrs, ident, ty });
+        fields.push(StructField {
+            attrs,
+            options,
+            visibility,
+            ident,
+            ty,
+        });
 
         if !input.is_empty() {
             input.parse::<Token![,]>()?;
@@ -676,6 +822,21 @@ fn nested_declarations_mut(expression: &mut TypeExpression) -> Vec<&mut Declarat
     match &mut expression.base {
         TypeBase::Rust { nested, .. } => nested.iter_mut().collect(),
         TypeBase::Nested(declaration) => vec![declaration],
+    }
+}
+
+/// Applies an enclosing explicit visibility to directly generated type declarations.
+fn apply_visibility_to_nested_type(
+    expression: &mut TypeExpression,
+    visibility: Option<Visibility>,
+) {
+    let Some(visibility) = visibility else {
+        return;
+    };
+    for declaration in nested_declarations_mut(expression) {
+        if declaration.visibility.is_none() {
+            declaration.visibility = Some(visibility.clone());
+        }
     }
 }
 
@@ -709,7 +870,13 @@ fn parse_type_list(input: ParseStream) -> syn::Result<Vec<TypeExpression>> {
 }
 
 /// Parses a generated type whose explicit name appears between vertical bars.
-fn parse_named_declaration(input: ParseStream) -> syn::Result<Declaration> {
+fn parse_named_declaration(
+    input: ParseStream,
+    attrs: Vec<Attribute>,
+    options: OptionOverrides,
+    visibility: Option<Visibility>,
+    keyword: Option<DeclarationKeyword>,
+) -> syn::Result<Declaration> {
     input.parse::<Token![|]>()?;
     let ident = Ident::parse_any(input)?;
     input.parse::<Token![|]>()?;
@@ -717,10 +884,13 @@ fn parse_named_declaration(input: ParseStream) -> syn::Result<Declaration> {
     if input.peek(Brace) {
         let body;
         syn::braced!(body in input);
-        parse_declaration(Vec::new(), ident, &body)
+        parse_declaration(attrs, options, visibility, keyword, ident, &body)
     } else {
+        validate_declaration_keyword(keyword, &DeclarationBody::Unit)?;
         Ok(Declaration {
-            attrs: Vec::new(),
+            attrs,
+            options,
+            visibility,
             ident,
             body: DeclarationBody::Unit,
         })
@@ -728,12 +898,14 @@ fn parse_named_declaration(input: ParseStream) -> syn::Result<Declaration> {
 }
 
 /// Parses variants, allowing commas to be omitted between delimiter-bounded forms.
-fn parse_enum_variants(parent: &Ident, input: ParseStream) -> syn::Result<Vec<ParsedEnumVariant>> {
+fn parse_enum_variants(input: ParseStream) -> syn::Result<Vec<ParsedEnumVariant>> {
     let mut variants = Vec::new();
 
     while !input.is_empty() {
         let mut attrs = input.call(Attribute::parse_outer)?;
-        let product_variants = take_product_variants(&mut attrs)?;
+        let options = take_options(&mut attrs)?;
+        let visibility = parse_visibility(input)?;
+        let keyword = parse_declaration_keyword(input)?;
         let kind = if input.peek(Token![|]) {
             EnumVariant::Implicit(Box::new(input.parse()?))
         } else if input.peek(Paren) {
@@ -760,12 +932,14 @@ fn parse_enum_variants(parent: &Ident, input: ParseStream) -> syn::Result<Vec<Pa
             } else if input.peek(Brace) {
                 let content;
                 syn::braced!(content in input);
-                let generated_ident = concatenate(&[parent, &ident]);
                 EnumVariant::Generated {
-                    ident,
+                    ident: ident.clone(),
                     declaration: Box::new(parse_declaration(
                         Vec::new(),
-                        generated_ident,
+                        OptionOverrides::default(),
+                        visibility.clone(),
+                        keyword,
+                        ident,
                         &content,
                     )?),
                 }
@@ -784,9 +958,22 @@ fn parse_enum_variants(parent: &Ident, input: ParseStream) -> syn::Result<Vec<Pa
             }
         };
 
+        if let Some(keyword) = keyword
+            && !matches!(&kind, EnumVariant::Generated { .. })
+        {
+            let span = match keyword {
+                DeclarationKeyword::Struct(span) | DeclarationKeyword::Enum(span) => span,
+            };
+            return Err(Error::new(
+                span,
+                "`struct` and `enum` can annotate only an inline generated declaration here",
+            ));
+        }
+
         variants.push(ParsedEnumVariant {
             attrs,
-            product_variants,
+            options,
+            visibility,
             kind,
         });
         if input.peek(Token![,]) {
@@ -802,18 +989,41 @@ fn lower_declaration(
     declaration: Declaration,
     options: Options,
 ) -> syn::Result<LoweredDeclaration> {
-    let Declaration { attrs, ident, body } = declaration;
+    let Declaration {
+        attrs,
+        options: local_options,
+        visibility,
+        ident,
+        body,
+    } = declaration;
+    let options = options.with(local_options);
+    let visibility = effective_visibility(visibility, options.public);
 
     match body {
-        DeclarationBody::Unit => lower_unit(attrs, ident),
-        DeclarationBody::Struct(fields) => lower_struct(attrs, ident, fields, options),
-        DeclarationBody::Tuple(fields) => lower_tuple(attrs, ident, fields, options),
-        DeclarationBody::Enum(variants) => lower_enum(attrs, ident, variants, options),
+        DeclarationBody::Unit => lower_unit(attrs, visibility, ident),
+        DeclarationBody::Struct(fields) => lower_struct(attrs, visibility, ident, fields, options),
+        DeclarationBody::Tuple(fields) => lower_tuple(attrs, visibility, ident, fields, options),
+        DeclarationBody::Enum(variants) => lower_enum(attrs, visibility, ident, variants, options),
     }
 }
 
+/// Resolves one explicit visibility against the current default-public option.
+fn effective_visibility(visibility: Option<Visibility>, public: bool) -> Visibility {
+    visibility.unwrap_or_else(|| {
+        if public {
+            parse_quote!(pub)
+        } else {
+            Visibility::Inherited
+        }
+    })
+}
+
 /// Emits one public nominal unit type.
-fn lower_unit(attrs: Vec<Attribute>, ident: Ident) -> syn::Result<LoweredDeclaration> {
+fn lower_unit(
+    attrs: Vec<Attribute>,
+    visibility: Visibility,
+    ident: Ident,
+) -> syn::Result<LoweredDeclaration> {
     let documentation = LitStr::new(
         &format!("Unit struct generated by `strutuct!` for `{ident}`."),
         ident.span(),
@@ -822,7 +1032,7 @@ fn lower_unit(attrs: Vec<Attribute>, ident: Ident) -> syn::Result<LoweredDeclara
         quote! {
             #(#attrs)*
             #[doc = #documentation]
-            pub struct #ident;
+            #visibility struct #ident;
         },
         emit_unit_macro(&ident),
     ];
@@ -837,6 +1047,7 @@ fn lower_unit(attrs: Vec<Attribute>, ident: Ident) -> syn::Result<LoweredDeclara
 /// Emits a public struct after collecting declarations from every field type.
 fn lower_struct(
     attrs: Vec<Attribute>,
+    visibility: Visibility,
     ident: Ident,
     fields: Vec<StructField>,
     options: Options,
@@ -845,9 +1056,11 @@ fn lower_struct(
     let mut lowered_fields = Vec::with_capacity(fields.len());
 
     for field in fields {
-        let lowered = lower_type(field.ty, options)?;
+        let field_options = options.with(field.options);
+        let lowered = lower_type(field.ty, field_options)?;
         items.extend(lowered.items);
         let field_attrs = field.attrs;
+        let field_visibility = effective_visibility(field.visibility, field_options.public);
         let field_ident = field.ident;
         let field_ty = lowered.ty;
         let field_documentation = LitStr::new(
@@ -857,7 +1070,7 @@ fn lower_struct(
         lowered_fields.push(quote! {
             #(#field_attrs)*
             #[doc = #field_documentation]
-            pub #field_ident: #field_ty
+            #field_visibility #field_ident: #field_ty
         });
     }
 
@@ -868,7 +1081,7 @@ fn lower_struct(
     items.push(quote! {
         #(#attrs)*
         #[doc = #documentation]
-        pub struct #ident {
+        #visibility struct #ident {
             #(#lowered_fields),*
         }
     });
@@ -884,12 +1097,14 @@ fn lower_struct(
 /// Emits a public tuple struct after collecting declarations from every field type.
 fn lower_tuple(
     attrs: Vec<Attribute>,
+    visibility: Visibility,
     ident: Ident,
     fields: Vec<TypeExpression>,
     options: Options,
 ) -> syn::Result<LoweredDeclaration> {
     let mut items = Vec::new();
     let mut lowered_fields = Vec::with_capacity(fields.len());
+    let field_visibility = effective_visibility(None, options.public);
 
     for (index, field) in fields.into_iter().enumerate() {
         let lowered = lower_type(field, options)?;
@@ -901,7 +1116,7 @@ fn lower_tuple(
         );
         lowered_fields.push(quote! {
             #[doc = #field_documentation]
-            pub #field_ty
+            #field_visibility #field_ty
         });
     }
 
@@ -912,7 +1127,7 @@ fn lower_tuple(
     items.push(quote! {
         #(#attrs)*
         #[doc = #documentation]
-        pub struct #ident(#(#lowered_fields),*);
+        #visibility struct #ident(#(#lowered_fields),*);
     });
     items.push(emit_tuple_macro(&ident));
 
@@ -926,6 +1141,7 @@ fn lower_tuple(
 /// Emits a public enum and a recursively delegating constructor macro.
 fn lower_enum(
     attrs: Vec<Attribute>,
+    visibility: Visibility,
     ident: Ident,
     variants: Vec<ParsedEnumVariant>,
     options: Options,
@@ -937,13 +1153,17 @@ fn lower_enum(
     for variant in variants {
         let ParsedEnumVariant {
             attrs: variant_attrs,
-            product_variants,
+            options: variant_overrides,
+            visibility: variant_visibility,
             kind,
         } = variant;
-        let product_variants = product_variants.unwrap_or(options.product_variants);
+        let variant_options = options.with(variant_overrides);
+        let product_variants = variant_options.product_variants;
         match kind {
             EnumVariant::Implicit(ty) => {
-                let lowered = lower_type(*ty, options)?;
+                let mut ty = *ty;
+                apply_visibility_to_nested_type(&mut ty, variant_visibility);
+                let lowered = lower_type(ty, variant_options)?;
                 items.extend(lowered.items);
                 let payload_name = lowered.name.ok_or_else(|| {
                     Error::new(
@@ -951,7 +1171,8 @@ fn lower_enum(
                         "cannot derive an implicit variant name from this type; name the variant explicitly",
                     )
                 })?;
-                let variant_ident = concatenate(&[&payload_name, &ident]);
+                let variant_ident =
+                    concatenate(&[&payload_name, &ident], variant_options.reverse_concat);
                 let payload_ty = lowered.ty;
                 let variant_documentation = LitStr::new(
                     &format!("Variant `{ident}::{variant_ident}` generated by `strutuct!`."),
@@ -1011,11 +1232,14 @@ fn lower_enum(
             }
             EnumVariant::Tuple {
                 ident: variant_ident,
-                fields,
+                mut fields,
             } => {
+                for field in &mut fields {
+                    apply_visibility_to_nested_type(field, variant_visibility.clone());
+                }
                 let mut fields = fields
                     .into_iter()
-                    .map(|field| lower_type(field, options))
+                    .map(|field| lower_type(field, variant_options))
                     .collect::<syn::Result<Vec<_>>>()?;
                 for field in &mut fields {
                     items.append(&mut field.items);
@@ -1068,15 +1292,20 @@ fn lower_enum(
             } => {
                 let Declaration {
                     attrs: declaration_attrs,
-                    ident: payload_ident,
+                    options: declaration_options,
+                    visibility: declaration_visibility,
+                    ident: _,
                     body,
                 } = *declaration;
+                let payload_ident =
+                    concatenate(&[&ident, &variant_ident], variant_options.reverse_concat);
 
                 match (product_variants, body) {
                     (false, DeclarationBody::Struct(fields)) => {
                         let mut lowered_fields = Vec::with_capacity(fields.len());
                         for field in fields {
-                            let lowered = lower_type(field.ty, options)?;
+                            let field_options = variant_options.with(field.options);
+                            let lowered = lower_type(field.ty, field_options)?;
                             items.extend(lowered.items);
                             let field_attrs = field.attrs;
                             let field_ident = field.ident;
@@ -1110,10 +1339,12 @@ fn lower_enum(
                         let lowered = lower_declaration(
                             Declaration {
                                 attrs: declaration_attrs,
+                                options: declaration_options,
+                                visibility: declaration_visibility,
                                 ident: payload_ident,
                                 body,
                             },
-                            options,
+                            variant_options,
                         )?;
                         items.extend(lowered.items);
                         let payload_ident = lowered.ident;
@@ -1159,7 +1390,7 @@ fn lower_enum(
     items.push(quote! {
         #(#attrs)*
         #[doc = #documentation]
-        pub enum #ident {
+        #visibility enum #ident {
             #(#lowered_variants),*
         }
     });
@@ -1331,13 +1562,18 @@ fn emit_enum_macro(ident: &Ident, specialized_arms: &[TokenStream]) -> TokenStre
     }
 }
 
-/// Concatenates identifiers while retaining the final source segment's span.
-fn concatenate(parts: &[&Ident]) -> Ident {
-    let spelling = parts
+/// Concatenates identifiers in the selected order while retaining a source span.
+fn concatenate(parts: &[&Ident], reverse: bool) -> Ident {
+    let ordered: Vec<_> = if reverse {
+        parts.iter().rev().copied().collect()
+    } else {
+        parts.to_vec()
+    };
+    let spelling = ordered
         .iter()
         .map(|part| part.unraw().to_string())
         .collect::<String>();
-    let span = parts
+    let span = ordered
         .last()
         .map_or_else(Span::call_site, |part| part.span());
     Ident::new(&spelling, span)
@@ -1458,6 +1694,112 @@ mod tests {
         assert!(expanded.contains("derive (Debug)"));
         assert!(expanded.contains("pub value : Delimited < Option < Content > >"));
         assert!(expanded.find("pub enum Content") < expanded.find("pub struct Root"));
+    }
+
+    /// Accepts Rust-like root braces, visibility, and shape keywords.
+    #[test]
+    fn accepts_braced_keyword_declarations_and_visibility() {
+        let expanded = expand("pub(crate) struct Product { priv hidden: u8, pub shown: u8, }")
+            .into_token_stream()
+            .to_string();
+
+        assert!(expanded.contains("pub (crate) struct Product"));
+        assert!(expanded.contains("hidden : u8"));
+        assert!(!expanded.contains("pub hidden : u8"));
+        assert!(expanded.contains("pub shown : u8"));
+
+        let private = expand("#[strutuct(public = false)] struct Private { field: u8 }")
+            .into_token_stream()
+            .to_string();
+        assert!(private.contains("struct Private"));
+        assert!(!private.contains("pub struct Private"));
+        assert!(!private.contains("pub field : u8"));
+    }
+
+    /// Diagnoses decorative keywords that disagree with the inferred body shape.
+    #[test]
+    fn validates_decorative_declaration_keywords() {
+        for (input, expected) in [
+            (
+                "struct Wrong { A, B }",
+                "`struct` does not match the inferred enum declaration",
+            ),
+            (
+                "enum Wrong { value: u8 }",
+                "`enum` does not match the inferred struct declaration",
+            ),
+            (
+                "struct Root { values: Vec<struct Wrong { A, B }> }",
+                "`struct` does not match the inferred enum declaration",
+            ),
+        ] {
+            let error = parse2::<Invocation>(input.parse::<TokenStream>().expect("tokens"))
+                .err()
+                .expect("the mismatched keyword must be rejected");
+
+            assert_eq!(error.to_string(), expected);
+        }
+    }
+
+    /// Applies public and concatenation options to one nested branch only.
+    #[test]
+    fn applies_configuration_globally_and_locally() {
+        let expanded = expand(
+            "#[strutuct(public = false)] enum Root { #[strutuct(public = true, reverse_concat = true)] pub Branch { Leaf { A, B } }, Regular { A, B } }",
+        )
+        .into_token_stream()
+        .to_string();
+
+        assert!(expanded.contains("enum Root"));
+        assert!(!expanded.contains("pub enum Root"));
+        assert!(expanded.contains("pub enum BranchRoot"));
+        assert!(expanded.contains("pub enum LeafBranchRoot"));
+        assert!(expanded.contains("enum RootRegular"));
+        assert!(!expanded.contains("pub enum RootRegular"));
+    }
+
+    /// Gives declaration-local options precedence over the forwarded invocation defaults.
+    #[test]
+    fn applies_forwarded_attributes_as_invocation_defaults() {
+        let private = expand("#[strutuct(public = false)] ; struct Private { value: u8 }")
+            .into_token_stream()
+            .to_string();
+        assert!(!private.contains("pub struct Private"));
+        assert!(!private.contains("pub value : u8"));
+
+        let overridden = expand(
+            "#[strutuct(public = false)] ; #[strutuct(public = true)] struct Public { value: u8 }",
+        )
+        .into_token_stream()
+        .to_string();
+        assert!(overridden.contains("pub struct Public"));
+        assert!(overridden.contains("pub value : u8"));
+    }
+
+    /// Parses attributes, keywords, and local configuration inside a generic argument.
+    #[test]
+    fn configures_declarations_inside_generic_types() {
+        let expanded = expand(
+            "struct Holder { values: Vec<#[strutuct(public = false, reverse_concat = true)] enum Choice { Nested { A, B } }>, }",
+        )
+        .into_token_stream()
+        .to_string();
+
+        assert!(expanded.contains("pub values : Vec < Choice >"));
+        assert!(expanded.contains("enum Choice"));
+        assert!(!expanded.contains("pub enum Choice"));
+        assert!(expanded.contains("enum NestedChoice"));
+        assert!(!expanded.contains("pub enum NestedChoice"));
+    }
+
+    /// Duplicates arbitrary root declaration attributes onto generated descendants.
+    #[test]
+    fn propagates_all_outer_declaration_attributes() {
+        let expanded = expand("#[repr(C)] struct Root { child: enum Child { A, B }, }")
+            .into_token_stream()
+            .to_string();
+
+        assert_eq!(expanded.matches("# [repr (C)]").count(), 2);
     }
 
     /// Keeps generic commas inside the type while hoisting declarations from grouped arguments.

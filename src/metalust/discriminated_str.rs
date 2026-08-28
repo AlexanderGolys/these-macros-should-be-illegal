@@ -1,4 +1,4 @@
-//! Implementation of enum accessors generated from string discriminants.
+//! Local enum-syntax extension for generated discriminant accessors.
 
 use proc_macro2::{Span, TokenStream};
 use quote::quote;

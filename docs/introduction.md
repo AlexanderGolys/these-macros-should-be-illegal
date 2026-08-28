@@ -13,7 +13,7 @@ Import whichever macro you use:
 
 ```rust
 use these_macros_should_be_illegal::{
-    discriminated_str, qf, shared_match_arms, strutuct,
+    discriminated_str, emmun, forward_attributes, qf, shared_match_arms, strutuct,
 };
 ```
 
@@ -21,8 +21,11 @@ use these_macros_should_be_illegal::{
 
 - [`discriminated_str`](discriminated_str.md) generates an accessor from text
   attached directly to enum variants or their fields.
-- [`strutuct!`](strutuct.md) declares a small family of nested algebraic types
-  in one place and generates constructor macros for them.
+- [`strutuct!`](strutuct.md), with `emmun!` as an exact alias, declares a small
+  family of nested algebraic types in one place and generates constructor macros
+  for them.
+- [`forward_attributes`](forward-attributes.md) makes outer attributes usable as
+  function-like macro configuration.
 - [`qf!`](qf.md) gives common standard-library types their fully qualified
   paths inside generated code.
 - [`shared_match_arms!`](shared-match-arms.md) shares an RHS between patterns

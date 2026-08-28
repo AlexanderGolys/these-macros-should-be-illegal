@@ -1,7 +1,7 @@
 //! Consumer tests for nested algebraic declarations and constructor macros.
 
 use serde::Deserialize;
-use these_macros_should_be_illegal::strutuct;
+use these_macros_should_be_illegal::{emmun, strutuct};
 
 /// Leaf payload used by the nested-struct consumer test.
 pub struct B(pub u8);
@@ -131,6 +131,43 @@ strutuct! {
         Empty,
         Values(String),
     }>>,
+}
+
+emmun! {
+    #[derive(Debug, PartialEq)]
+    pub struct Aliased {
+        value: u8,
+    }
+}
+
+strutuct! {
+    #[derive(Debug, PartialEq)]
+    #[strutuct(reverse_concat = true)]
+    pub enum Reversed {
+        Branch { Leaf { End(String) } }
+    }
+}
+
+strutuct! {
+    #[derive(Debug, PartialEq)]
+    #[strutuct(public = false)]
+    struct PrivateDefaults {
+        value: u8,
+        #[strutuct(public = true)]
+        #[strutuct(reverse_concat = true)]
+        pub branch: pub enum BranchChoice {
+            Nested { Unit }
+        },
+        #[strutuct(product_variants = false)]
+        pair: enum LocalProduct { Pair(u8, u8) },
+    }
+}
+
+strutuct! {
+    #[derive(Debug, PartialEq)]
+    pub struct GenericVec {
+        choices: Vec<enum InlineChoice { First, Second }>,
+    }
 }
 
 /// Verifies that nested declarations are emitted before their parent struct.
@@ -370,4 +407,47 @@ fn generates_types_inside_generic_containers() {
             arguments: Delimited(Some(ArgumentListContent::Values("argument".to_owned()))),
         }
     );
+}
+
+/// Exposes `emmun!` as an exact alias for the complete `strutuct!` expansion.
+#[test]
+fn expands_the_emmun_alias() {
+    assert_eq!(Aliased!(value: 7), Aliased { value: 7 });
+}
+
+/// Reverses every automatically concatenated name in one declaration family.
+#[test]
+fn reverses_generated_name_concatenation() {
+    let value = Reversed!(Branch::Leaf::End("done".to_owned()));
+
+    assert!(matches!(
+        value,
+        Reversed::Branch(BranchReversed::Leaf(LeafBranchReversed::End(message)))
+            if message == "done"
+    ));
+}
+
+/// Lets global private defaults and local public overrides coexist in one family.
+#[test]
+fn configures_visibility_globally_and_locally() {
+    let value = PrivateDefaults!(
+        value: 9,
+        branch: BranchChoice!(Nested::Unit),
+        pair: LocalProduct!(Pair(1, 2)),
+    );
+
+    assert_eq!(value.value, 9);
+    assert!(matches!(
+        value.branch,
+        BranchChoice::Nested(NestedBranchChoice::Unit)
+    ));
+    assert!(matches!(value.pair, LocalProduct::Pair(1, 2)));
+}
+
+/// Generates a declaration directly inside a standard generic container.
+#[test]
+fn generates_an_enum_inside_vec() {
+    let value = GenericVec!(choices: vec![InlineChoice!(Second)]);
+
+    assert!(matches!(value.choices.as_slice(), [InlineChoice::Second]));
 }

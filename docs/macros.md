@@ -5,14 +5,16 @@ The crate currently has two kinds of macro.
 The first kind generates ordinary Rust from compact input:
 
 - [`discriminated_str`](discriminated_str.md) works on an enum declaration;
-- [`strutuct!`](strutuct.md) generates related structs, enums, and constructor
-  macros;
+- [`strutuct!`](strutuct.md), also exported as `emmun!`, generates related
+  structs, enums, and constructor macros;
 - [`qf!`](qf.md) rewrites one Rust type.
 
 The second kind rewrites raw token streams recursively:
 
 - [`shared_match_arms!`](shared-match-arms.md) duplicates one match-arm RHS
   across independently typed patterns;
+- [`forward_attributes`](forward-attributes.md) moves outer attributes behind
+  a `;` boundary inside any function-like macro invocation;
 - `literally_literal_string!` recognizes the deliberately invalid `@@"text"`;
 - `excluded_macros` marks macro invocations whose contents must remain opaque;
 - `expand!` loads an out-of-line module and applies one or more rewriting
