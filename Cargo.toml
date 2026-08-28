@@ -1,6 +1,6 @@
 [package]
 name = "these-macros-should-be-illegal"
-version = "0.3.2"
+version = "0.3.3"
 edition.workspace = true
 description = "A personal collection of experimental Rust procedural macros"
 license = "MIT"

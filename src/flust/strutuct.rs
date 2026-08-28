@@ -220,7 +220,7 @@ pub(crate) fn strutuct(input: TokenStream) -> TokenStream {
         .and_then(|(_, input)| parse2::<Invocation>(input))
         .and_then(|mut invocation| {
             let attrs = propagated_declaration_attrs(&invocation.declaration.attrs);
-            propagate_declaration_attrs(&mut invocation.declaration.body, &attrs);
+            propagate_declaration_attrs(&mut invocation.declaration.body, &attrs)?;
             lower_declaration(invocation.declaration, invocation.options)
         })
         .map(|declaration| declaration.items.into_iter().collect());
@@ -246,88 +246,108 @@ fn is_derive(attribute: &Attribute) -> bool {
     attribute.path().is_ident("derive")
 }
 
-/// Reports whether an ordinary derive list explicitly contains `Default`.
-fn derives_default(attribute: &Attribute) -> bool {
-    is_derive(attribute)
-        && attribute
-            .parse_args_with(Punctuated::<Path, Token![,]>::parse_terminated)
-            .is_ok_and(|derives| derives.iter().any(|derive| derive.is_ident("Default")))
-}
-
 /// Applies inherited declaration attributes to every nested generated type.
-fn propagate_declaration_attrs(body: &mut DeclarationBody, attrs: &[Attribute]) {
+fn propagate_declaration_attrs(body: &mut DeclarationBody, attrs: &[Attribute]) -> syn::Result<()> {
     match body {
         DeclarationBody::Unit => {}
         DeclarationBody::Struct(fields) => {
             for field in fields {
-                propagate_type_attrs(&mut field.ty, attrs);
+                propagate_type_attrs(&mut field.ty, attrs)?;
             }
         }
         DeclarationBody::Tuple(fields) => {
             for field in fields {
-                propagate_type_attrs(field, attrs);
+                propagate_type_attrs(field, attrs)?;
             }
         }
         DeclarationBody::Enum(variants) => {
             for variant in variants {
                 match &mut variant.kind {
-                    EnumVariant::Implicit(ty) => propagate_type_attrs(ty, attrs),
+                    EnumVariant::Implicit(ty) => propagate_type_attrs(ty, attrs)?,
                     EnumVariant::Tuple { fields, .. } => {
                         for field in fields {
-                            propagate_type_attrs(field, attrs);
+                            propagate_type_attrs(field, attrs)?;
                         }
                     }
                     EnumVariant::Generated { declaration, .. } => {
-                        propagate_nested_declaration_attrs(declaration, attrs);
+                        propagate_nested_declaration_attrs(declaration, attrs)?;
                     }
                     EnumVariant::Unit(_) => {}
                 }
             }
         }
     }
+
+    Ok(())
 }
 
 /// Applies inherited attributes when a type expression defines a nested type.
-fn propagate_type_attrs(expression: &mut TypeExpression, attrs: &[Attribute]) {
+fn propagate_type_attrs(expression: &mut TypeExpression, attrs: &[Attribute]) -> syn::Result<()> {
     if let TypeBase::Nested(declaration) = &mut expression.base {
-        propagate_nested_declaration_attrs(declaration, attrs);
+        propagate_nested_declaration_attrs(declaration, attrs)?;
+    }
+
+    Ok(())
+}
+
+/// Parses the trait paths from one derive attribute.
+fn parse_derive_paths(attribute: &Attribute) -> syn::Result<Vec<Path>> {
+    attribute
+        .parse_args_with(Punctuated::<Path, Token![,]>::parse_terminated)
+        .map(|paths| paths.into_iter().collect())
+}
+
+/// Adds paths that are not already present in a derive list.
+fn extend_unique_paths(paths: &mut Vec<Path>, additions: impl IntoIterator<Item = Path>) {
+    for addition in additions {
+        let spelling = addition.to_token_stream().to_string();
+        if !paths
+            .iter()
+            .any(|path| path.to_token_stream().to_string() == spelling)
+        {
+            paths.push(addition);
+        }
     }
 }
 
-/// Adds inherited attributes to one declaration and recursively visits its body.
-fn propagate_nested_declaration_attrs(declaration: &mut Declaration, attrs: &[Attribute]) {
-    let overrides_derive = declaration.attrs.iter().any(is_derive);
-    let overrides_default = declaration.attrs.iter().any(derives_default);
-    let mut retained_default = false;
-    let mut inherited = Vec::new();
-    for attribute in attrs {
-        if !is_derive(attribute) || !overrides_derive {
-            inherited.push(attribute.clone());
-        } else if !overrides_default && !retained_default && derives_default(attribute) {
-            inherited.push(parse_quote_spanned!(attribute.span()=> #[derive(Default)]));
-            retained_default = true;
-        }
+/// Merges inherited attributes into one declaration and recursively visits its body.
+fn propagate_nested_declaration_attrs(
+    declaration: &mut Declaration,
+    attrs: &[Attribute],
+) -> syn::Result<()> {
+    let derive_span = declaration
+        .attrs
+        .iter()
+        .chain(attrs)
+        .find(|attribute| is_derive(attribute))
+        .map_or_else(Span::call_site, Attribute::span);
+    let mut derives = Vec::new();
+    for attribute in attrs
+        .iter()
+        .chain(&declaration.attrs)
+        .filter(|attribute| is_derive(attribute))
+    {
+        extend_unique_paths(&mut derives, parse_derive_paths(attribute)?);
     }
-    for attribute in inherited.iter().rev() {
+
+    declaration.attrs.retain(|attribute| !is_derive(attribute));
+    if !derives.is_empty() {
+        declaration.attrs.insert(
+            0,
+            parse_quote_spanned!(derive_span=> #[derive(#(#derives),*)]),
+        );
+    }
+
+    for attribute in attrs.iter().filter(|attribute| !is_derive(attribute)).rev() {
         if !declaration.attrs.iter().any(|existing| {
             existing.to_token_stream().to_string() == attribute.to_token_stream().to_string()
         }) {
             declaration.attrs.insert(0, attribute.clone());
         }
     }
-    let mut descendants = attrs
-        .iter()
-        .filter(|attribute| !is_derive(attribute))
-        .cloned()
-        .collect::<Vec<_>>();
-    descendants.extend(
-        declaration
-            .attrs
-            .iter()
-            .filter(|attribute| is_derive(attribute))
-            .cloned(),
-    );
-    propagate_declaration_attrs(&mut declaration.body, &descendants);
+
+    let descendants = propagated_declaration_attrs(&declaration.attrs);
+    propagate_declaration_attrs(&mut declaration.body, &descendants)
 }
 
 /// Consumes `strutuct` configuration attributes and retains ordinary Rust attributes.
@@ -446,7 +466,7 @@ fn parse_struct_fields(input: ParseStream) -> syn::Result<Vec<StructField>> {
         } else if let Some(derive) = attrs.iter().find(|attribute| is_derive(attribute)) {
             return Err(Error::new_spanned(
                 derive,
-                "a local derive override requires an inline generated field type",
+                "a local derive requires an inline generated field type",
             ));
         }
         fields.push(StructField { attrs, ident, ty });
@@ -1180,9 +1200,9 @@ mod tests {
         );
     }
 
-    /// Replaces a family derive for one nested declaration and its descendants.
+    /// Extends family derives for one nested declaration and its descendants.
     #[test]
-    fn local_derive_overrides_the_nested_branch() {
+    fn local_derive_extends_the_nested_branch() {
         let expanded = expand(
             "#[derive(Clone, Default)] Root #[derive(Debug)] branch: Branch { leaf: Leaf { value: String } },",
         );
@@ -1217,8 +1237,8 @@ mod tests {
         };
 
         assert_eq!(derives_for("Root"), ["Clone", "Default"]);
-        assert_eq!(derives_for("Branch"), ["Debug", "Default"]);
-        assert_eq!(derives_for("Leaf"), ["Debug", "Default"]);
+        assert_eq!(derives_for("Branch"), ["Clone", "Debug", "Default"]);
+        assert_eq!(derives_for("Leaf"), ["Clone", "Debug", "Default"]);
     }
 
     /// Generates same-name macros that recursively construct nested enum chains.

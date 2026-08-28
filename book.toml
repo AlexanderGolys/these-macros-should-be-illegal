@@ -1,0 +1,12 @@
+[book]
+authors = ["Alexander Golys"]
+language = "en"
+src = "docs"
+title = "These Macros Should Be Illegal"
+
+[build]
+build-dir = "target/book"
+create-missing = false
+
+[output.html]
+git-repository-url = "https://github.com/AlexanderGolys/these-macros-should-be-illegal"

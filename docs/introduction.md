@@ -1,0 +1,36 @@
+# These Macros Should Be Illegal
+
+This crate is a small collection of experimental Rust macros for deleting
+boilerplate and trying syntax that ordinary Rust—quite reasonably—does not
+accept. The useful bits come first; the cursed implementation details are here
+when you actually need them.
+
+```sh
+cargo add these-macros-should-be-illegal
+```
+
+Import whichever macro you use:
+
+```rust
+use these_macros_should_be_illegal::{discriminated_str, qf, strutuct};
+```
+
+## Pick your crime
+
+- [`discriminated_str`](discriminated_str.md) generates an accessor from text
+  attached directly to enum variants or their fields.
+- [`strutuct!`](strutuct.md) declares a small family of nested algebraic types
+  in one place and generates constructor macros for them.
+- [`qf!`](qf.md) gives common standard-library types their fully qualified
+  paths inside generated code.
+- [`literally_literal_string!` and `expand!`](literal-syntax.md) let token
+  rewriting handle syntax that Rust cannot parse as an ordinary source file.
+
+## Stability
+
+This is a personal stable-Rust macro laboratory. The APIs are intentionally
+small and experimental, and may evolve whenever a better crime presents
+itself. Releases are available from
+[crates.io](https://crates.io/crates/these-macros-should-be-illegal), and the
+ordinary API reference lives on
+[docs.rs](https://docs.rs/these-macros-should-be-illegal).

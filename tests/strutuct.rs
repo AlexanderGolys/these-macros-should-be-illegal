@@ -109,6 +109,16 @@ strutuct! {
     },
 }
 
+strutuct! {
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    DeriveFamily
+    #[derive(Copy, Hash)]
+    kind: LiteralKind {
+        Nested { value: u8 },
+        Unit,
+    },
+}
+
 /// Verifies that nested declarations are emitted before their parent struct.
 #[test]
 fn hoists_nested_declarations_into_ordinary_public_types() {
@@ -308,4 +318,17 @@ fn derives_defaults_for_nested_structs_and_enums() {
         DefaultFamily::default().settings.choice,
         DefaultChoice::First
     );
+}
+
+/// Adds local derives without removing traits inherited from the type family.
+#[test]
+fn combines_inherited_and_local_derives() {
+    fn assert_traits<T>()
+    where
+        T: std::fmt::Debug + Clone + PartialEq + Eq + Copy + std::hash::Hash,
+    {
+    }
+
+    assert_traits::<LiteralKind>();
+    assert_traits::<LiteralKindNested>();
 }
