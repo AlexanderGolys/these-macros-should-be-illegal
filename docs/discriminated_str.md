@@ -4,9 +4,9 @@ The attribute argument names the generated method. A string literal after a
 variant becomes its fixed value:
 
 ```rust
-use these_macros_should_be_illegal::str_disc;
+use these_macros_should_be_illegal::discriminated_str;
 
-#[str_disc(description)]
+#[discriminated_str(description)]
 enum Action {
     Quit = "quit the application",
     Submit = "evaluate the input",
@@ -23,9 +23,9 @@ variant with multiple fields, an integer discriminant selects a zero-based
 tuple field and an identifier selects a named field:
 
 ```rust
-use these_macros_should_be_illegal::str_disc;
+use these_macros_should_be_illegal::discriminated_str;
 
-#[str_disc(description)]
+#[discriminated_str(description)]
 enum Message<'a> {
     Fixed = "fixed text",
     Owned(String),
@@ -44,6 +44,30 @@ assert_eq!(
 Selected fields must have type `String` or `&str`. The borrowed result is tied
 to the borrow of `self`, so an enum may use distinct field lifetimes.
 
+A closure discriminant instead receives every field in declaration order and
+computes the description from the complete product. Any number of arguments,
+including zero, is supported. The macro checks only the arity; Rust checks that
+the closure returns the accessor's selected base type:
+
+```rust
+use these_macros_should_be_illegal::discriminated_str;
+
+#[discriminated_str(description: String)]
+enum Message {
+    Pair(String, String) = |left, right| format!("{left}: {right}"),
+    Unit = || String::from("unit"),
+}
+
+assert_eq!(
+    Message::Pair("hello".into(), "world".into()).description(),
+    "hello: world",
+);
+assert_eq!(Message::Unit.description(), "unit");
+```
+
+Because the generated accessor matches on `&self`, closure arguments receive
+the corresponding shared field bindings.
+
 # Missing descriptions
 
 If any variant has neither a fixed description nor a selected or inferred text
@@ -51,9 +75,9 @@ field, the accessor returns `Option`. When every present description is fixed,
 the optional accessor remains a `const fn` returning `Option<&'static str>`:
 
 ```rust
-use these_macros_should_be_illegal::str_disc;
+use these_macros_should_be_illegal::discriminated_str;
 
-#[str_disc(description)]
+#[discriminated_str(description)]
 enum Status {
     Ready = "ready",
     Unknown,
@@ -70,9 +94,9 @@ Use `= stringify` on the attribute to return a missing variant's Rust name
 instead:
 
 ```rust
-use these_macros_should_be_illegal::str_disc;
+use these_macros_should_be_illegal::discriminated_str;
 
-#[str_disc(description = stringify)]
+#[discriminated_str(description = stringify)]
 enum Status {
     Ready = "ready",
     Unknown,
@@ -87,9 +111,9 @@ Write `: String` after the method name to clone or allocate each present value.
 Optionality remains inferred independently from that base return type:
 
 ```rust
-use these_macros_should_be_illegal::str_disc;
+use these_macros_should_be_illegal::discriminated_str;
 
-#[str_disc(description: String)]
+#[discriminated_str(description: String)]
 enum Error {
     Message(String),
     Missing,

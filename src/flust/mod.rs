@@ -1,6 +1,6 @@
 //! Procedural-macro implementations and their shared token preprocessing.
 
-/// Implements the `str_disc` attribute macro.
+/// Implements the `discriminated_str` attribute macro.
 mod discriminated_str;
 /// Implements the `excluded_macros` attribute macro.
 mod excluded_macros;
@@ -14,7 +14,7 @@ mod preprocessing;
 mod strutuct;
 
 /// Generates an enum accessor from string discriminants.
-pub(super) use discriminated_str::str_disc as str_disc_impl;
+pub(super) use discriminated_str::discriminated_str as discriminated_str_impl;
 /// Adds macro names to the preprocessing exclusion set.
 pub(super) use excluded_macros::excluded_macros as excluded_macros_impl;
 /// Expands an out-of-line module with injected function-like macros.

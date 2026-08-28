@@ -1,5 +1,9 @@
 # These Macros Should Be Illegal
 
+[![Crates.io](https://img.shields.io/crates/v/these-macros-should-be-illegal.svg)](https://crates.io/crates/these-macros-should-be-illegal)
+[![Documentation](https://docs.rs/these-macros-should-be-illegal/badge.svg)](https://docs.rs/these-macros-should-be-illegal)
+[![License](https://img.shields.io/crates/l/these-macros-should-be-illegal.svg)](LICENSE)
+
 A personal Rust procedural-macro laboratory for ideas that probably should not
 be this easy to express. Idiomatic boundaries are optional here: whole-module
 transformations and deliberately cursed generated code are welcome.
@@ -80,13 +84,13 @@ literally_literal_string! {
 
 ## String discriminants
 
-`#[str_disc(method)]` keeps an enum's string metadata beside each variant and
+`#[discriminated_str(method)]` keeps an enum's string metadata beside each variant and
 generates a borrowed accessor:
 
 ```rust
-use these_macros_should_be_illegal::str_disc;
+use these_macros_should_be_illegal::discriminated_str;
 
-#[str_disc(description)]
+#[discriminated_str(description)]
 pub enum Action {
     Quit = "quit the application",
     Submit = "evaluate the input",
@@ -98,10 +102,10 @@ This becomes a unit-variant enum with
 `String` accessor explicitly when desired; optionality is inferred separately:
 
 ```rust
-#[str_disc(description: String)]
+#[discriminated_str(description: String)]
 enum OwnedDescription { Example = "allocated on access" }
 
-#[str_disc(description: &str)]
+#[discriminated_str(description: &str)]
 enum BorrowedDescription { Example = "borrowed" }
 ```
 
@@ -110,17 +114,23 @@ Those typed forms generate ordinary, non-`const` methods.
 Variants may retain ordinary tuple or struct payloads alongside a fixed
 description. A sole `String` or `&str` field becomes the dynamic description.
 For variants with multiple fields, an integer selects a zero-based tuple field
-and an identifier selects a named field:
+and an identifier selects a named field. A closure receives every field in
+declaration order and computes the description from the complete product:
 
 ```rust
-#[str_disc(description)]
+#[discriminated_str(description: String)]
 enum Error<'a> {
     Io(std::io::Error) = "I/O error",
     Pair(String, String) = 1,
     Context { primary: &'a str, secondary: &'a str } = primary,
+    Combined(String, String) = |left, right| format!("{left}: {right}"),
     Custom(String),
 }
 ```
+
+The closure may take any number of arguments; the macro checks its arity and
+lets Rust check its return type. Use `description: String` when it returns an
+owned string, as in `Combined` above.
 
 The return type follows the complete enum shape:
 
@@ -135,7 +145,7 @@ The return type follows the complete enum shape:
 Missing descriptions can instead use their variant names:
 
 ```rust
-#[str_disc(description = stringify)]
+#[discriminated_str(description = stringify)]
 enum State {
     Explicit = "custom spelling",
     Generated,

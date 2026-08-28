@@ -1,8 +1,8 @@
 //! Consumer tests for fixed and dynamic string-discriminant accessors.
 
-use these_macros_should_be_illegal::str_disc;
+use these_macros_should_be_illegal::discriminated_str;
 
-#[str_disc(description)]
+#[discriminated_str(description)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Action {
     Quit = "quit spectral-m2",
@@ -29,26 +29,26 @@ enum Action {
     InsertTab = "insert a tab",
 }
 
-#[str_disc(label: String)]
+#[discriminated_str(label: String)]
 enum OwnedLabel {
     Value = "owned",
     Dynamic(String),
 }
 
-#[str_disc(label: &str)]
+#[discriminated_str(label: &str)]
 enum BorrowedLabel {
     Value = "borrowed",
     Dynamic(String),
 }
 
-#[str_disc(description)]
+#[discriminated_str(description)]
 enum MixedDescription {
     Tuple(u16) = "tuple payload",
     Struct { code: u8 } = "struct payload",
     Dynamic(String),
 }
 
-#[str_disc(description)]
+#[discriminated_str(description)]
 enum SelectedDescription<'a> {
     Tuple(String, String) = 1,
     Struct { a: String, b: String } = a,
@@ -57,37 +57,59 @@ enum SelectedDescription<'a> {
     BorrowedStruct { code: u8, text: &'a str } = text,
 }
 
-#[str_disc(description)]
+#[discriminated_str(description)]
+enum ClosureDescription<'a> {
+    Longer(&'a str, &'a str) = |left, right| {
+        if left.len() >= right.len() {
+            *left
+        } else {
+            *right
+        }
+    },
+    Named {
+        code: u8,
+        text: &'a str,
+    } = |_, text| *text,
+    Unit = || "unit",
+}
+
+#[discriminated_str(description: String)]
+enum OwnedClosureDescription {
+    Joined(String, String) = |left, right| format!("{left}:{right}"),
+}
+
+#[discriminated_str(description)]
 enum LifetimeDescription<'a, 'b, 'c> {
     A(&'a str),
     B(&'b str),
     C(&'c str) = "a",
 }
 
-#[str_disc(description)]
+#[discriminated_str(description)]
 enum OptionalDescription<'a> {
     Fixed = "fixed",
     Dynamic(String),
     Borrowed(&'a str),
+    Closure(&'a str, &'a str) = |_, text| *text,
     Missing,
     Payload(u8),
 }
 
 /// Descriptions that are either compile-time constants or absent.
-#[str_disc(description)]
+#[discriminated_str(description)]
 enum OptionalFixedDescription {
     Fixed = "fixed",
     Missing,
 }
 
-#[str_disc(description: String)]
+#[discriminated_str(description: String)]
 enum OptionalOwnedDescription {
     Fixed = "owned fixed",
     Dynamic(String),
     Missing,
 }
 
-#[str_disc(description = stringify)]
+#[discriminated_str(description = stringify)]
 enum StringifiedDescription {
     Fixed = "fixed override",
     Missing,
@@ -105,7 +127,7 @@ const OPTIONAL_FIXED_DESCRIPTION: Option<&str> = OptionalFixedDescription::Fixed
 const OPTIONAL_MISSING_DESCRIPTION: Option<&str> = OptionalFixedDescription::Missing.description();
 
 #[test]
-fn generates_string_discriminant_accessor() {
+fn generates_discriminated_string_accessor() {
     let cases = [
         (Action::Quit, "quit spectral-m2"),
         (Action::Submit, "evaluate the input"),
@@ -218,6 +240,28 @@ fn selects_dynamic_fields_and_preserves_enum_lifetimes() {
     ));
 }
 
+/// Invokes closures with every field and trusts Rust to check their result types.
+#[test]
+fn computes_descriptions_from_variant_products() {
+    assert_eq!(
+        ClosureDescription::Longer("longer", "short").description(),
+        "longer"
+    );
+    assert_eq!(
+        ClosureDescription::Named {
+            code: 7,
+            text: "named",
+        }
+        .description(),
+        "named",
+    );
+    assert_eq!(ClosureDescription::Unit.description(), "unit");
+    assert_eq!(
+        OwnedClosureDescription::Joined("left".into(), "right".into()).description(),
+        "left:right",
+    );
+}
+
 /// Uses the `&self` borrow as the common lifetime for distinct variant references.
 #[test]
 fn reborrows_distinct_variant_lifetimes_for_the_accessor() {
@@ -247,6 +291,10 @@ fn supports_optional_borrowed_and_owned_descriptions() {
     assert_eq!(
         OptionalDescription::Borrowed("borrowed").description(),
         Some("borrowed")
+    );
+    assert_eq!(
+        OptionalDescription::Closure("ignored", "computed").description(),
+        Some("computed")
     );
     assert_eq!(OptionalDescription::Missing.description(), None);
     let payload = OptionalDescription::Payload(7);

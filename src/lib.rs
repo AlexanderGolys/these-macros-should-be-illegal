@@ -4,7 +4,8 @@
 mod flust;
 
 use flust::{
-    excluded_macros_impl, expand_impl, literally_literal_string_impl, str_disc_impl, strutuct_impl,
+    discriminated_str_impl, excluded_macros_impl, expand_impl, literally_literal_string_impl,
+    strutuct_impl,
 };
 use proc_macro::TokenStream;
 
@@ -12,9 +13,9 @@ use proc_macro::TokenStream;
 #[rustfmt::skip] #[proc_macro]
 pub fn literally_literal_string(input: TokenStream) -> TokenStream { literally_literal_string_impl(input.into()).into() }
 
-#[doc = include_str!("../docs/str_disc.md")]
+#[doc = include_str!("../docs/discriminated_str.md")]
 #[rustfmt::skip] #[proc_macro_attribute]
-pub fn str_disc(arguments: TokenStream, item: TokenStream) -> TokenStream { str_disc_impl(arguments.into(), item.into()).into() }
+pub fn discriminated_str(arguments: TokenStream, item: TokenStream) -> TokenStream { discriminated_str_impl(arguments.into(), item.into()).into() }
 
 /// Prevents transformations from descending into the listed macro invocations.
 #[rustfmt::skip] #[proc_macro_attribute]
