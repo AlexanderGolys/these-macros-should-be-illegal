@@ -51,9 +51,16 @@ strutuct! {
 
 strutuct! {
     TypedChoices
-    Named(NamedPayload) { A, B }
+    Named |NamedPayload| { A, B }
     Generated { A, B }
-    (ImplicitPayload) { A, B }
+    |ImplicitPayload| { A, B }
+    NamedUnit |NamedUnitPayload|
+    |ImplicitUnit|
+}
+
+strutuct! {
+    UnitComponent
+    generated: |GeneratedUnit|,
 }
 
 strutuct! {
@@ -64,8 +71,8 @@ strutuct! {
 strutuct! {
     TuplePayloads
     Auto { (String, u8) }
-    Explicit(ExplicitPair) { (String, u8) }
-    (ImplicitPair) { (String, u8) }
+    Explicit |ExplicitPair| { (String, u8) }
+    |ImplicitPair| { (String, u8) }
 }
 
 strutuct! {
@@ -196,6 +203,21 @@ fn names_generated_types_from_parents_and_variants() {
         implicit,
         TypedChoices::ImplicitPayloadTypedChoices(ImplicitPayload::A)
     ));
+}
+
+/// Generates nominal unit types when a bar-named declaration omits its body.
+#[test]
+fn generates_named_unit_types_without_bodies() {
+    let named = TypedChoices!(NamedUnit);
+    let implicit = TypedChoices!(ImplicitUnit);
+    let component = UnitComponent!(generated: GeneratedUnit);
+
+    assert!(matches!(named, TypedChoices::NamedUnit(NamedUnitPayload)));
+    assert!(matches!(
+        implicit,
+        TypedChoices::ImplicitUnitTypedChoices(ImplicitUnit)
+    ));
+    assert!(matches!(component.generated, GeneratedUnit));
 }
 
 /// Generates root and nested tuple products with at least two elements.

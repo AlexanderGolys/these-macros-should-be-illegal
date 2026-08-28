@@ -52,6 +52,8 @@ struct Declaration {
 
 /// The three declaration shapes inferred from the DSL body.
 enum DeclarationBody {
+    /// A nominal unit type declared without a body.
+    Unit,
     /// A product type recognized by leading `name: Type` members.
     Struct(Vec<StructField>),
     /// A tuple struct recognized by one parenthesized product of at least two types.
@@ -129,6 +131,8 @@ enum TypeWrapper {
 /// Whether a lowered declaration is a product or sum type.
 #[derive(Clone, Copy)]
 enum DeclarationKind {
+    /// A generated unit struct whose value is its name.
+    Unit,
     /// A generated struct whose constructor macro accepts fields.
     Struct,
     /// A generated tuple struct whose constructor macro accepts positional fields.
@@ -182,7 +186,9 @@ impl Parse for Invocation {
 impl Parse for TypeExpression {
     /// Parses the base type before consuming left-associative postfix wrappers.
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let base = if begins_nested_declaration(input) {
+        let base = if input.peek(Token![|]) {
+            TypeBase::Nested(Box::new(parse_named_declaration(input)?))
+        } else if begins_nested_declaration(input) {
             let ident = Ident::parse_any(input)?;
             let content;
             syn::braced!(content in input);
@@ -251,6 +257,7 @@ fn derives_default(attribute: &Attribute) -> bool {
 /// Applies inherited declaration attributes to every nested generated type.
 fn propagate_declaration_attrs(body: &mut DeclarationBody, attrs: &[Attribute]) {
     match body {
+        DeclarationBody::Unit => {}
         DeclarationBody::Struct(fields) => {
             for field in fields {
                 propagate_type_attrs(&mut field.ty, attrs);
@@ -481,6 +488,25 @@ fn parse_type_list(input: ParseStream) -> syn::Result<Vec<TypeExpression>> {
     Ok(fields)
 }
 
+/// Parses a generated type whose explicit name appears between vertical bars.
+fn parse_named_declaration(input: ParseStream) -> syn::Result<Declaration> {
+    input.parse::<Token![|]>()?;
+    let ident = Ident::parse_any(input)?;
+    input.parse::<Token![|]>()?;
+
+    if input.peek(Brace) {
+        let body;
+        syn::braced!(body in input);
+        parse_declaration(Vec::new(), ident, &body)
+    } else {
+        Ok(Declaration {
+            attrs: Vec::new(),
+            ident,
+            body: DeclarationBody::Unit,
+        })
+    }
+}
+
 /// Parses variants, allowing commas to be omitted between delimiter-bounded forms.
 fn parse_enum_variants(parent: &Ident, input: ParseStream) -> syn::Result<Vec<ParsedEnumVariant>> {
     let mut variants = Vec::new();
@@ -488,24 +514,30 @@ fn parse_enum_variants(parent: &Ident, input: ParseStream) -> syn::Result<Vec<Pa
     while !input.is_empty() {
         let mut attrs = input.call(Attribute::parse_outer)?;
         let product_variants = take_product_variants(&mut attrs)?;
-        let kind = if input.peek(Paren) {
+        let kind = if input.peek(Token![|]) {
+            EnumVariant::Implicit(Box::new(input.parse()?))
+        } else if input.peek(Paren) {
             let content;
             parenthesized!(content in input);
             let mut fields = parse_type_list(&content)?;
             if fields.len() != 1 {
                 return Err(content.error("an implicit variant accepts exactly one type"));
             }
-            let mut ty = fields.pop().expect("checked one field above");
             if input.peek(Brace) {
-                let definition;
-                syn::braced!(definition in input);
-                ty = define_type(ty, &definition)?;
+                return Err(
+                    input.error("use `|Type| { ... }` to define an explicitly named payload type")
+                );
             }
-            EnumVariant::Implicit(Box::new(ty))
+            EnumVariant::Implicit(Box::new(fields.pop().expect("checked one field above")))
         } else {
             let ident = Ident::parse_any(input)?;
 
-            if input.peek(Brace) {
+            if input.peek(Token![|]) {
+                EnumVariant::Tuple {
+                    ident,
+                    fields: vec![input.parse()?],
+                }
+            } else if input.peek(Brace) {
                 let content;
                 syn::braced!(content in input);
                 let generated_ident = concatenate(&[parent, &ident]);
@@ -520,17 +552,11 @@ fn parse_enum_variants(parent: &Ident, input: ParseStream) -> syn::Result<Vec<Pa
             } else if input.peek(Paren) {
                 let content;
                 parenthesized!(content in input);
-                let mut fields = parse_type_list(&content)?;
+                let fields = parse_type_list(&content)?;
                 if input.peek(Brace) {
-                    if fields.len() != 1 {
-                        return Err(
-                            content.error("a generated payload requires exactly one type name")
-                        );
-                    }
-                    let definition;
-                    syn::braced!(definition in input);
-                    let ty = fields.pop().expect("checked one field above");
-                    fields.push(define_type(ty, &definition)?);
+                    return Err(input.error(
+                        "use `Name |Type| { ... }` to name an explicitly generated payload type",
+                    ));
                 }
                 EnumVariant::Tuple { ident, fields }
             } else {
@@ -551,36 +577,6 @@ fn parse_enum_variants(parent: &Ident, input: ParseStream) -> syn::Result<Vec<Pa
     Ok(variants)
 }
 
-/// Replaces one explicit type name with the declaration defined by the following body.
-fn define_type(expression: TypeExpression, body: ParseStream) -> syn::Result<TypeExpression> {
-    let TypeExpression { base, wrappers } = expression;
-    if !wrappers.is_empty() {
-        return Err(body.error("a generated type name cannot use postfix wrappers"));
-    }
-    let TypeBase::Rust(ty) = base else {
-        return Err(body.error("expected an undeclared type name before this body"));
-    };
-    let Type::Path(path) = ty.as_ref() else {
-        return Err(Error::new_spanned(ty, "expected a single type identifier"));
-    };
-    if path.qself.is_some() || path.path.leading_colon.is_some() || path.path.segments.len() != 1 {
-        return Err(Error::new_spanned(ty, "expected a single type identifier"));
-    }
-    let segment = &path.path.segments[0];
-    if !segment.arguments.is_empty() {
-        return Err(Error::new_spanned(ty, "expected a single type identifier"));
-    }
-
-    Ok(TypeExpression {
-        base: TypeBase::Nested(Box::new(parse_declaration(
-            Vec::new(),
-            segment.ident.clone(),
-            body,
-        )?)),
-        wrappers: Vec::new(),
-    })
-}
-
 /// Lowers a declaration after recursively lowering all nested declarations.
 fn lower_declaration(
     declaration: Declaration,
@@ -589,10 +585,33 @@ fn lower_declaration(
     let Declaration { attrs, ident, body } = declaration;
 
     match body {
+        DeclarationBody::Unit => lower_unit(attrs, ident),
         DeclarationBody::Struct(fields) => lower_struct(attrs, ident, fields, options),
         DeclarationBody::Tuple(fields) => lower_tuple(attrs, ident, fields, options),
         DeclarationBody::Enum(variants) => lower_enum(attrs, ident, variants, options),
     }
+}
+
+/// Emits one public nominal unit type.
+fn lower_unit(attrs: Vec<Attribute>, ident: Ident) -> syn::Result<LoweredDeclaration> {
+    let documentation = LitStr::new(
+        &format!("Unit struct generated by `strutuct!` for `{ident}`."),
+        ident.span(),
+    );
+    let items = vec![
+        quote! {
+            #(#attrs)*
+            #[doc = #documentation]
+            pub struct #ident;
+        },
+        emit_unit_macro(&ident),
+    ];
+
+    Ok(LoweredDeclaration {
+        items,
+        ident,
+        kind: DeclarationKind::Unit,
+    })
 }
 
 /// Emits a public struct after collecting declarations from every field type.
@@ -726,6 +745,13 @@ fn lower_enum(
 
                 if !lowered.wrapped {
                     match lowered.nested_kind {
+                        Some(DeclarationKind::Unit) => {
+                            macro_arms.push(quote! {
+                                (#payload_name) => {
+                                    #ident::#variant_ident(#payload_name)
+                                };
+                            });
+                        }
                         Some(DeclarationKind::Enum) => {
                             macro_arms.push(quote! {
                                 (#payload_name::$($tail:tt)+) => {
@@ -935,6 +961,11 @@ fn nested_variant_arm(
     kind: DeclarationKind,
 ) -> TokenStream {
     match kind {
+        DeclarationKind::Unit => quote! {
+            (#selector) => {
+                #parent::#variant(#payload)
+            };
+        },
         DeclarationKind::Enum => quote! {
             (#selector::$($tail:tt)+) => {
                 #parent::#variant(#payload!($($tail)+))
@@ -950,6 +981,23 @@ fn nested_variant_arm(
                 #parent::#variant(#payload!($($fields)*))
             };
         },
+    }
+}
+
+/// Emits a same-name macro that constructs a generated unit struct.
+fn emit_unit_macro(ident: &Ident) -> TokenStream {
+    let documentation = LitStr::new(
+        &format!("Constructs a `{ident}` value generated by `strutuct!`."),
+        ident.span(),
+    );
+    quote! {
+        #[doc = #documentation]
+        #[allow(unused_macros)]
+        macro_rules! #ident {
+            () => {
+                #ident
+            };
+        }
     }
 }
 
@@ -1198,6 +1246,27 @@ mod tests {
                 expanded.contains(expected),
                 "missing `{expected}` in `{expanded}`"
             );
+        }
+    }
+
+    /// Keeps parentheses exclusively for payloads instead of generated type names.
+    #[test]
+    fn rejects_the_old_parenthesized_generated_type_spelling() {
+        for (input, expected) in [
+            (
+                "Expr Named(Payload) { A, B }",
+                "use `Name |Type| { ... }` to name an explicitly generated payload type",
+            ),
+            (
+                "Expr (Payload) { A, B }",
+                "use `|Type| { ... }` to define an explicitly named payload type",
+            ),
+        ] {
+            let error = parse2::<Invocation>(input.parse::<TokenStream>().expect("tokens"))
+                .err()
+                .expect("the old contextual spelling must be rejected");
+
+            assert_eq!(error.to_string(), expected);
         }
     }
 

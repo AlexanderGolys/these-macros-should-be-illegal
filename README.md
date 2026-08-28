@@ -184,18 +184,24 @@ If the body starts like `name: Type`, it is a struct. One parenthesized product
 with at least two elements is a tuple struct. Everything else is an enum.
 Nested declarations come out before the declarations using them.
 
-Inside an enum, names mean variants and parentheses mean types:
+Inside an enum, parentheses refer to terminal payload types that already exist.
+Vertical bars declare the generated payload type's name. Without a body, a
+bar-named declaration generates a nominal unit type (the `()` case, not `!`):
 
 ```text
-Name(Type) { ... }  defines Type and emits Name(Type)
-Name { ... }        defines ParentName and emits Name(ParentName)
-(Type) { ... }      defines Type and emits TypeParent(Type)
-Name(Type)          stays Name(Type)
-Name                stays Name
-(Type)              becomes TypeParent(Type)
+Name |Type| { ... }  defines Type and emits Name(Type)
+Name |Type|          defines unit Type and emits Name(Type)
+Name { ... }         defines ParentName and emits Name(ParentName)
+|Type| { ... }       defines Type and emits TypeParent(Type)
+|Type|               defines unit Type and emits TypeParent(Type)
+Name(Type)           uses Type and stays Name(Type)
+Name                 stays Name
+(Type)               uses Type and becomes TypeParent(Type)
 ```
 
-The body in `{ ... }` can itself describe a struct, tuple struct, or enum.
+The `|Type|` spelling also works in a struct field, such as
+`state: |EmptyState|`. The body in `{ ... }` can itself describe a struct,
+tuple struct, or enum.
 Multi-field tuple-like variants carry one tuple product, so `Pair(X, Y)` emits
 `Pair((X, Y))`. Struct-like syntax similarly creates a product type by default:
 
