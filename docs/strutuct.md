@@ -488,6 +488,8 @@ struct Syntax {
 
 The available options are:
 
+- `inclusions = true | false` generates consuming functions for enum constructor
+  paths; it is disabled by default;
 - `product_variants = true | false` selects packed products versus ordinary
   multi-field enum variants;
 - `public = true | false` selects the default visibility for that declaration
@@ -518,8 +520,9 @@ Generated declarations carry `#[allow(dead_code)]`, because a complete algebraic
 hierarchy commonly contains types, fields, or variants that one consumer does
 not use. Generated constructor macros similarly carry
 `#[allow(unused_macros)]`. Every generated item already has synthetic
-documentation, and no local variable bindings are generated, so
-`missing_docs` and `unused_variables` do not need suppression. User attributes
+documentation, so `missing_docs` does not need suppression. Every binding
+generated for an inclusion function is consumed, so `unused_variables` does
+not need suppression either. User attributes
 are emitted after the generated declaration guard, so a local
 `#[deny(dead_code)]` can opt a branch back into checking.
 
@@ -715,3 +718,101 @@ A::B(AB::C(ABC::D(value)))
 </div>
 
 A generated struct or tuple ends the path and accepts its corresponding fields.
+
+## Enum inclusions
+
+Set `inclusions = true` to generate the canonical consuming injection for every
+constructor occurrence in an enum tree:
+
+<div class="highlight-comparison-key">
+  <strong>You write</strong>
+  <strong>Roughly expands to</strong>
+</div>
+
+<div class="highlight-comparison">
+
+<div class="highlight-comparison-pane">
+
+```rust
+use these_macros_should_be_illegal::strutuct;
+
+strutuct! {
+    #[strutuct(inclusions = true)]
+    Token {
+        Operator { Not(String), Plus },
+        Keyword { Not(String) },
+    }
+}
+
+let token = TokenOperatorNot("!".to_owned());
+assert!(matches!(
+    token,
+    Token::Operator(TokenOperator::Not(value)) if value == "!"
+));
+```
+
+</div>
+
+<div class="highlight-comparison-pane">
+
+```rust,ignore
+pub enum TokenOperator {
+    Not(String),
+    Plus,
+}
+
+pub enum TokenKeyword {
+    Not(String),
+}
+
+pub enum Token {
+    Operator(TokenOperator),
+    Keyword(TokenKeyword),
+}
+
+pub fn TokenOperator(value: TokenOperator) -> Token {
+    Token::Operator(value)
+}
+
+pub fn TokenOperatorNot(value: String) -> Token {
+    Token::Operator(TokenOperator::Not(value))
+}
+
+pub fn TokenOperatorPlus() -> Token {
+    Token::Operator(TokenOperator::Plus)
+}
+
+pub fn TokenKeyword(value: TokenKeyword) -> Token {
+    Token::Keyword(value)
+}
+
+pub fn TokenKeywordNot(value: String) -> Token {
+    Token::Keyword(TokenKeyword::Not(value))
+}
+```
+
+</div>
+
+</div>
+
+Names encode the complete constructor occurrence, not merely the endpoint type.
+Consequently, equal leaf types in distinct branches produce distinct functions
+such as `TokenOperatorNot` and `TokenKeywordNot`. Unit variants produce
+zero-argument functions; other inclusions consume their payload and return the
+root enum.
+
+Joining proceeds only through nested enums. Products, generic containers, and
+postfix `?` or `*` wrappers are boundaries; an enum below such a boundary keeps
+its own independently generated inclusions instead. A branch-local
+`#[strutuct(inclusions = false)]` stops that branch, while a local `true` can
+enable one branch when the surrounding declaration leaves the feature off.
+
+For a chain of depth `N`, the macro emits `N` functions. Their composed bodies
+have total worst-case size `O(N²)`; the macro never enumerates the possible
+factorizations of a path. Internally this is a bottom-up fold followed by the
+iterated join of homogeneous coproduct layers.
+
+Tuple and unit structs also introduce value constructors. If an automatically
+named inclusion would occupy the same value-namespace name, `strutuct!` reports
+the collision. Give the payload a distinct exact name with `Name |Payload| { ... }`,
+disable inclusions for that branch, or use a non-tuple payload.

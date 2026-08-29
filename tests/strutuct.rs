@@ -216,6 +216,29 @@ strutuct! {
     }
 }
 
+strutuct! {
+    #[derive(Debug, PartialEq)]
+    #[strutuct(inclusions = true)]
+    Included {
+        Branch { Leaf(String), Empty },
+        Other { Leaf(String) },
+        Direct(u8),
+        Pair(String, u8),
+        Record { value: u8 },
+        Unit,
+    }
+}
+
+strutuct! {
+    #[derive(Debug, PartialEq)]
+    #[strutuct(inclusions = true, product_variants = false)]
+    IncludedRustVariants {
+        Pair(String, u8),
+        Record { text: String, number: u8 },
+        Empty(),
+    }
+}
+
 /// Verifies that nested declarations are emitted before their parent struct.
 #[test]
 fn hoists_nested_declarations_into_ordinary_public_types() {
@@ -223,6 +246,53 @@ fn hoists_nested_declarations_into_ordinary_public_types() {
 
     assert!(matches!(value.a, A::A2));
     assert_eq!(value.b.0, 7);
+}
+
+/// Generates direct and joined inclusions for every homogeneous enum path.
+#[test]
+fn injects_payloads_through_flattened_enum_paths() {
+    let branch = IncludedBranch(IncludedBranch::Empty);
+    let leaf = IncludedBranchLeaf("branch".to_owned());
+    let other = IncludedOtherLeaf("other".to_owned());
+    let direct = IncludedDirect(7);
+    let pair = IncludedPair(("pair".to_owned(), 8));
+    let record = IncludedRecord(IncludedRecord { value: 9 });
+    let unit = IncludedUnit();
+
+    assert!(matches!(branch, Included::Branch(IncludedBranch::Empty)));
+    assert!(matches!(
+        leaf,
+        Included::Branch(IncludedBranch::Leaf(value)) if value == "branch"
+    ));
+    assert!(matches!(
+        other,
+        Included::Other(IncludedOther::Leaf(value)) if value == "other"
+    ));
+    assert!(matches!(direct, Included::Direct(7)));
+    assert!(matches!(pair, Included::Pair((value, 8)) if value == "pair"));
+    assert!(matches!(
+        record,
+        Included::Record(IncludedRecord { value: 9 })
+    ));
+    assert!(matches!(unit, Included::Unit));
+}
+
+/// Adapts ordinary multi-field Rust variants from explicit tuple products.
+#[test]
+fn injects_into_product_free_rust_variants() {
+    let pair = IncludedRustVariantsPair(("pair".to_owned(), 1));
+    let record = IncludedRustVariantsRecord(("record".to_owned(), 2));
+    let empty = IncludedRustVariantsEmpty();
+
+    assert!(matches!(
+        pair,
+        IncludedRustVariants::Pair(value, 1) if value == "pair"
+    ));
+    assert!(matches!(
+        record,
+        IncludedRustVariants::Record { text, number: 2 } if text == "record"
+    ));
+    assert!(matches!(empty, IncludedRustVariants::Empty()));
 }
 
 /// Verifies direct construction from leaves through multiple generated enums.

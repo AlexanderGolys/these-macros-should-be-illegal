@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.0 - 2026-08-29
+
+### Added
+
+- `#[strutuct(inclusions = true)]` generates consuming functions for direct and
+  iteratively joined enum constructor paths.
+- `strutuct!` lowering now retains a reusable algebraic tree with a bottom-up
+  fold, product selectors, coproduct branches, wrappers, and opaque Rust
+  containers for future generated operations.
+
 ## 0.5.0 - 2026-08-29
 
 ### Changed

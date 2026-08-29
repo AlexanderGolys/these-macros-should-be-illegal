@@ -282,7 +282,8 @@ The same attribute before a variant overrides the declaration-wide setting.
 `#[strutuct(reverse_concat = true)]` reverses automatically generated names,
 turning `ParentName` into `NameParent`. All configuration options can be applied
 to the whole family or locally before one field or variant branch. The current
-complete option set is `product_variants`, `public`, and `reverse_concat`.
+complete option set is `inclusions`, `product_variants`, `public`, and
+`reverse_concat`.
 
 When extended syntax could be read as unusually shaped Rust, `strutuct!` parses
 it according to its own grammar. The spellings are chosen to keep realistic
@@ -324,6 +325,14 @@ A::B(AB::C(ABC::D(value)))
 A nested struct ends the path and accepts named fields. Boxed and optional edges
 also stop there, so `T*` can express recursion without making the constructor
 macro expand forever. That would be a different kind of illegal.
+
+With `#[strutuct(inclusions = true)]`, enum trees additionally generate consuming
+free functions for every constructor occurrence. For example,
+`TokenOperatorNot(String) -> Token` composes the `Not` and `Operator`
+injections. Complete occurrence paths keep equal leaf types in different
+branches distinct. Joining stops at products, generic containers, and postfix
+wrappers. A depth-`N` chain produces `N` functions whose total composed body
+size is `O(N²)`—paths are never refactored or combinatorially enumerated.
 
 ## The boring but important token rules
 
