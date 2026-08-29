@@ -1,0 +1,66 @@
+/* Everforest Medium, exposed as an additional mdBook theme. */
+.everforest {
+  --bg: #2d353b;
+  --fg: #d3c6aa;
+
+  --sidebar-bg: #232a2e;
+  --sidebar-fg: #9da9a0;
+  --sidebar-non-existant: #7a8478;
+  --sidebar-active: #a7c080;
+  --sidebar-spacer: #3d484d;
+
+  --scrollbar: #859289;
+
+  --icons: #859289;
+  --icons-hover: #d3c6aa;
+
+  --links: #7fbbb3;
+  --inline-code-color: #dbbc7f;
+
+  --theme-popup-bg: #343f44;
+  --theme-popup-border: #56635f;
+  --theme-hover: #3d484d;
+
+  --quote-bg: #343f44;
+  --quote-border: #83c092;
+  --warning-border: #dbbc7f;
+
+  --table-border-color: #475258;
+  --table-header-bg: #3d484d;
+  --table-alternate-bg: #343f44;
+
+  --searchbar-border-color: #56635f;
+  --searchbar-bg: #3d484d;
+  --searchbar-fg: #d3c6aa;
+  --searchbar-shadow-color: #232a2e;
+  --searchresults-header-fg: #9da9a0;
+  --searchresults-border-color: #56635f;
+  --searchresults-li-bg: #343f44;
+  --search-mark-bg: #dbbc7f;
+
+  --color-scheme: dark;
+
+  --copy-button-filter: invert(76%) sepia(8%) saturate(438%) hue-rotate(95deg) brightness(89%) contrast(88%);
+  --copy-button-filter-hover: invert(91%) sepia(11%) saturate(465%) hue-rotate(358deg) brightness(89%) contrast(86%);
+
+  --footnote-highlight: #7fbbb3;
+  --overlay-bg: rgba(35, 42, 46, 0.45);
+
+  --blockquote-note-color: #7fbbb3;
+  --blockquote-tip-color: #a7c080;
+  --blockquote-important-color: #d699b6;
+  --blockquote-warning-color: #dbbc7f;
+  --blockquote-caution-color: #e67e80;
+
+  --sidebar-header-border-color: #7fbbb3;
+
+  /* Keep Tree-sitter highlighting in the same palette. */
+  --ts-red: #e67e80;
+  --ts-orange: #e69875;
+  --ts-yellow: #dbbc7f;
+  --ts-green: #a7c080;
+  --ts-cyan: #83c092;
+  --ts-blue: #7fbbb3;
+  --ts-purple: #d699b6;
+  --ts-gray: #859289;
+}

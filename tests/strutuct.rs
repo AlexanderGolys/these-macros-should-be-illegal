@@ -10,9 +10,13 @@ pub struct B(pub u8);
 #[derive(Debug, PartialEq)]
 pub struct Delimited<T>(pub T);
 
+/// Payload deliberately lacking `Default` for the branch-local underive test.
+#[derive(Debug, PartialEq)]
+pub struct NoDefault;
+
 strutuct! {
     S
-    a: A { A1, A2, A3 },
+    a: |A| { A1, A2, A3 },
     b: B,
 }
 
@@ -94,18 +98,18 @@ strutuct! {
     #[derive(Debug, Deserialize, PartialEq)]
     SerdeSettings
     #[serde(flatten)]
-    theme: SerdeTheme {
+    theme: |SerdeTheme| {
         #[serde(default)]
         label: Option<String>,
-        palette: SerdePalette { Light, Dark },
+        palette: |SerdePalette| { Light, Dark },
     },
 }
 
 strutuct! {
     #[derive(Debug, Default, PartialEq)]
     DefaultFamily
-    settings: DefaultSettings {
-        choice: DefaultChoice {
+    settings: |DefaultSettings| {
+        choice: |DefaultChoice| {
             #[default]
             First,
             Second,
@@ -117,7 +121,7 @@ strutuct! {
     #[derive(Debug, Clone, PartialEq, Eq)]
     DeriveFamily
     #[derive(Copy, Hash)]
-    kind: LiteralKind {
+    kind: |LiteralKind| {
         Nested { value: u8 },
         Unit,
     },
@@ -127,7 +131,7 @@ strutuct! {
     #[derive(Debug, PartialEq)]
     GenericContainer
     #[derive(Clone, Eq)]
-    arguments: Delimited<Option<ArgumentListContent {
+    arguments: Delimited<Option<|ArgumentListContent| {
         Empty,
         Values(String),
     }>>,
@@ -155,18 +159,60 @@ strutuct! {
         value: u8,
         #[strutuct(public = true)]
         #[strutuct(reverse_concat = true)]
-        pub branch: pub enum BranchChoice {
+        pub branch: pub enum |BranchChoice| {
             Nested { Unit }
         },
         #[strutuct(product_variants = false)]
-        pair: enum LocalProduct { Pair(u8, u8) },
+        pair: enum |LocalProduct| { Pair(u8, u8) },
     }
 }
 
 strutuct! {
     #[derive(Debug, PartialEq)]
     pub struct GenericVec {
-        choices: Vec<enum InlineChoice { First, Second }>,
+        choices: Vec<enum |InlineChoice| { First, Second }>,
+    }
+}
+
+strutuct! {
+    /// A comment retained alongside a lexical atom.
+    #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+    pub struct Trivia {
+        /// The kind.
+        kind: Kind { LineComment, BlockComment },
+        /// The span.
+        span: usize,
+    }
+}
+
+strutuct! {
+    #[derive(Debug, PartialEq)]
+    #[repr(C)]
+    #[strutuct(product_variants = false)]
+    enum InlineStructVariant {
+        Branch {
+            child: Child { A, B },
+        }
+    }
+}
+
+strutuct! {
+    #[cfg(any())]
+    CfgExclusive { Disabled }
+}
+
+strutuct! {
+    #[cfg(not(any()))]
+    CfgExclusive { Enabled }
+}
+
+strutuct! {
+    #[derive(Debug, Default, PartialEq)]
+    DefaultWithNonDefaultBranch {
+        #[default]
+        Empty,
+        #[underive(Default)]
+        Data { value: NoDefault },
     }
 }
 
@@ -450,4 +496,57 @@ fn generates_an_enum_inside_vec() {
     let value = GenericVec!(choices: vec![InlineChoice!(Second)]);
 
     assert!(matches!(value.choices.as_slice(), [InlineChoice::Second]));
+}
+
+/// Resolves a braced field declaration from the generated parent name.
+#[test]
+fn names_generated_struct_field_types_bottom_up() {
+    let trivia = Trivia!(kind: TriviaKind!(LineComment), span: 7);
+
+    assert_eq!(trivia.kind, TriviaKind::LineComment);
+    assert_eq!(trivia.span, 7);
+}
+
+/// Keeps family derives valid when a generated product is represented as a Rust variant.
+#[test]
+fn derives_product_free_struct_variants_and_their_nested_types() {
+    let value = InlineStructVariant!(Branch {
+        child: InlineStructVariantChild!(B),
+    });
+
+    assert_eq!(
+        value,
+        InlineStructVariant::Branch {
+            child: InlineStructVariantChild::B,
+        }
+    );
+}
+
+/// Keeps cfg-exclusive declarations exclusive in both the type and macro namespaces.
+#[test]
+fn conditionally_compiles_constructor_macros_with_their_types() {
+    assert!(matches!(CfgExclusive!(Enabled), CfgExclusive::Enabled));
+}
+
+/// Keeps `default` variant-local while removing inherited `Default` from one branch.
+#[test]
+fn keeps_default_local_and_underive_branch_scoped() {
+    assert_eq!(
+        DefaultWithNonDefaultBranch::default(),
+        DefaultWithNonDefaultBranch::Empty,
+    );
+    assert_eq!(
+        DefaultWithNonDefaultBranch!(Data { value: NoDefault }),
+        DefaultWithNonDefaultBranch::Data(DefaultWithNonDefaultBranchData { value: NoDefault }),
+    );
+}
+
+/// Expands a declaration family anywhere an ordinary block item is accepted.
+#[test]
+fn expands_at_block_item_position() {
+    strutuct! {
+        LocalFamily { First, Second }
+    }
+
+    assert!(matches!(LocalFamily!(Second), LocalFamily::Second));
 }

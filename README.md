@@ -84,12 +84,14 @@ strutuct! {
 }
 
 let request = Request!(
-    method: Method!(Post),
+    method: RequestMethod!(Post),
     body: Some("payload".to_owned()),
 );
 ```
 
-That one block creates public `Method` and `Request` types in the right order.
+That one block creates public `RequestMethod` and `Request` types in the right
+order. A braced nested name is relative to its generated parent; use
+`method: |Method| { ... }` when the nested type must be named exactly `Method`.
 Postfix `T?` and `T*` mean `Option<T>` and `Box<T>`.
 
 Nested enums compose through their generated macros:
@@ -242,9 +244,11 @@ Name                 stays Name
 (Type)               uses Type and becomes TypeParent(Type)
 ```
 
-The `|Type|` spelling also works in a struct field, such as
-`state: |EmptyState|`. The body in `{ ... }` can itself describe a struct,
-tuple struct, or enum.
+For struct fields, bare `field: Type` uses an existing Rust type, braced
+`field: Name { ... }` generates `ParentName`, and bars request an exact generated
+name, as in `field: |Type| { ... }`. A body in `{ ... }` can itself describe a
+struct, tuple struct, or enum; bare `field: |EmptyState|` generates an exact
+nominal unit type.
 Multi-field tuple-like variants carry one tuple product, so `Pair(X, Y)` emits
 `Pair((X, Y))`. Struct-like syntax similarly creates a product type by default:
 
@@ -277,20 +281,31 @@ The same attribute before a variant overrides the declaration-wide setting.
 
 `#[strutuct(reverse_concat = true)]` reverses automatically generated names,
 turning `ParentName` into `NameParent`. All configuration options can be applied
-to the whole family or locally before one field or variant branch.
+to the whole family or locally before one field or variant branch. The current
+complete option set is `product_variants`, `public`, and `reverse_concat`.
 
-Ordinary field attributes are preserved, and every ordinary root declaration
-attribute is copied onto generated nested declarations. This keeps
-derive helpers such as `#[serde(flatten)]` usable across a nested type family.
-A `derive` before an inline struct field adds to the family derives for that
-generated type and every declaration nested below it. Repeated traits are
-deduplicated. Generated enums use Rust's ordinary `#[default]` variant attribute
-to select their default value.
+When extended syntax could be read as unusually shaped Rust, `strutuct!` parses
+it according to its own grammar. The spellings are chosen to keep realistic
+collisions rare; ambiguous input is nevertheless resolved deterministically in
+favor of the macro syntax.
+
+Ordinary field and variant attributes are preserved locally. Root declaration
+attributes are copied onto generated nested declarations, except documentation:
+doc comments stay only where they were written. Derives are merged and
+deduplicated; `#[underive(Trait)]` subtracts traits for one generated branch and
+propagates that reduced list to its descendants. Other attributes, including
+third-party attributes, are copied verbatim and remain responsible for whether
+they accept each generated item shape. Generated enums use Rust's ordinary
+`#[default]` variant attribute to select their default value. Generated
+declarations suppress `dead_code`, constructor macros suppress `unused_macros`,
+and `cfg`/`cfg_attr` guard both corresponding items.
 
 Inline declarations may occur inside ordinary generic containers, so a field
-such as `Delimited<Option<ArgumentListContent { Empty, Value(String) }>>`
-hoists `ArgumentListContent` and leaves the surrounding type intact. The more
-Rust-like `Vec<enum Element { A, B }>` spelling works too.
+such as `Delimited<Option<Content { Empty, Value(String) }>>` in `Arguments`
+hoists `ArgumentsContent` and leaves the surrounding container intact. Use
+`Delimited<Option<|ArgumentListContent| { ... }>>` when the generated name
+should be exact. The more Rust-like `Vec<enum Element { A, B }>` spelling works
+too.
 
 Each generated type also gets a constructor macro in Rust's conveniently
 separate macro namespace. Every enum macro eats one path segment and calls the

@@ -1,6 +1,6 @@
 [package]
 name = "these-macros-should-be-illegal"
-version = "0.4.0"
+version = "0.5.0"
 edition.workspace = true
 description = "Rust macros that you should never use"
 license = "MIT"
@@ -8,6 +8,7 @@ homepage = "https://github.com/AlexanderGolys/these-macros-should-be-illegal"
 repository = "https://github.com/AlexanderGolys/these-macros-should-be-illegal"
 documentation = "https://docs.rs/these-macros-should-be-illegal"
 readme = "README.md"
+exclude = ["book/", "book.toml", "vercel.json"]
 keywords = ["procedural-macro", "syntax", "experimental"]
 categories = ["development-tools", "rust-patterns"]
 authors = ["Alexander Golys <alexandergolys@gmail.com>"]
@@ -29,6 +30,8 @@ missing_docs = "deny"
 
 [lints.clippy]
 missing_docs_in_private_items = "deny"
+# Attribute forwarding must remain in item position inside doctests.
+needless_doctest_main = "allow"
 
 [workspace]
 members = ["crates/*"]

@@ -8,5 +8,22 @@ title = "These Macros Should Be Illegal"
 build-dir = "target/book"
 create-missing = false
 
+[preprocessor.tsitter]
+after = ["links"]
+
+[preprocessor.tsitter.languages.rust]
+library = "book/parsers/rust.so"
+highlights = "book/queries/rust/highlights.scm"
+
+[preprocessor.tsitter.languages.bash]
+library = "book/parsers/bash.so"
+highlights = "book/queries/bash/highlights.scm"
+aliases = ["bash", "sh", "shell"]
+
 [output.html]
 git-repository-url = "https://github.com/AlexanderGolys/these-macros-should-be-illegal"
+theme = "book/theme"
+additional-css = [
+    "book/theme/treesitter.css",
+    "book/theme/everforest.css",
+]

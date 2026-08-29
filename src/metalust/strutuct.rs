@@ -1,5 +1,7 @@
 //! Nested algebraic declarations replacing one ordinary Rust item shape.
 
+use std::collections::HashSet;
+
 use proc_macro2::{Group, Span, TokenStream, TokenTree};
 use quote::{ToTokens, quote};
 use syn::{
@@ -11,6 +13,7 @@ use syn::{
     punctuated::Punctuated,
     spanned::Spanned,
     token::{Brace, Paren},
+    visit_mut::VisitMut,
 };
 
 use TokenTree::{Group as GroupTT, Ident as IdentTT, Punct as PunctTT};
@@ -90,8 +93,19 @@ struct Declaration {
     visibility: Option<Visibility>,
     /// Name of the generated Rust type.
     ident: Ident,
+    /// Whether this name is exact or relative to its generated parent.
+    name: DeclarationName,
     /// Struct fields or enum variants belonging to the declaration.
     body: DeclarationBody,
+}
+
+/// How an inline declaration's identifier becomes its generated Rust name.
+#[derive(Clone, Copy)]
+enum DeclarationName {
+    /// Keeps the identifier exactly as written, as for roots and `|Type|`.
+    Exact,
+    /// Concatenates the identifier with its generated parent declaration.
+    Relative,
 }
 
 /// The three declaration shapes inferred from the DSL body.
@@ -180,13 +194,38 @@ struct InlineDeclarationProbe {
 enum TypeBase {
     /// A Rust type together with declarations embedded in its generic arguments.
     Rust {
-        /// The ordinary Rust type left after replacing inline declarations by their names.
+        /// The ordinary Rust type with inline declarations replaced by unique placeholders.
         ty: Box<Type>,
         /// Inline declarations hoisted out of the Rust type.
-        nested: Vec<Declaration>,
+        nested: Vec<NestedDeclaration>,
     },
     /// A nested declaration that must be hoisted before its parent.
     Nested(Box<Declaration>),
+}
+
+/// One inline declaration and its collision-free placeholder inside a parsed Rust type.
+struct NestedDeclaration {
+    /// Temporary identifier replaced by the declaration's final generated name.
+    placeholder: Ident,
+    /// Declaration hoisted out of its surrounding Rust type.
+    declaration: Declaration,
+}
+
+/// Replaces one internal type placeholder with its resolved generated identifier.
+struct ReplacePlaceholder<'a> {
+    /// Placeholder inserted before the surrounding Rust type was parsed.
+    placeholder: &'a Ident,
+    /// Final bottom-up name of the generated declaration.
+    replacement: &'a Ident,
+}
+
+impl VisitMut for ReplacePlaceholder<'_> {
+    /// Rewrites the unique placeholder wherever it occurs in the parsed type.
+    fn visit_ident_mut(&mut self, ident: &mut Ident) {
+        if ident == self.placeholder {
+            *ident = self.replacement.clone();
+        }
+    }
 }
 
 /// Supported postfix type constructors.
@@ -267,9 +306,25 @@ impl Parse for Invocation {
             if !input.is_empty() {
                 return Err(input.error("unexpected tokens after braced root declaration"));
             }
-            parse_declaration(attrs, options, visibility, keyword, ident, &content)?
+            parse_declaration(
+                attrs,
+                options,
+                visibility,
+                keyword,
+                ident,
+                DeclarationName::Exact,
+                &content,
+            )?
         } else {
-            parse_declaration(attrs, options, visibility, keyword, ident, input)?
+            parse_declaration(
+                attrs,
+                options,
+                visibility,
+                keyword,
+                ident,
+                DeclarationName::Exact,
+                input,
+            )?
         };
         Ok(Self { declaration })
     }
@@ -372,7 +427,15 @@ fn parse_inline_declaration(input: ParseStream) -> syn::Result<Declaration> {
     let ident = Ident::parse_any(input)?;
     let content;
     syn::braced!(content in input);
-    parse_declaration(attrs, options, visibility, keyword, ident, &content)
+    parse_declaration(
+        attrs,
+        options,
+        visibility,
+        keyword,
+        ident,
+        DeclarationName::Relative,
+        &content,
+    )
 }
 
 /// Parses postfix ownership wrappers that follow a directly nested declaration.
@@ -434,15 +497,52 @@ fn parse_rust_type(input: ParseStream) -> syn::Result<(TypeBase, Vec<TypeWrapper
 /// Replaces inline declarations by their names throughout one Rust type.
 fn rewrite_nested_type_declarations(
     tokens: Vec<TokenTree>,
-) -> syn::Result<(TokenStream, Vec<Declaration>)> {
+) -> syn::Result<(TokenStream, Vec<NestedDeclaration>)> {
+    let mut identifiers = HashSet::new();
+    collect_identifiers(&tokens, &mut identifiers);
+    let mut next_placeholder = 0;
+    rewrite_nested_type_declarations_inner(tokens, &mut identifiers, &mut next_placeholder)
+}
+
+/// Recursively collects identifiers so internal placeholders cannot shadow user input.
+fn collect_identifiers(tokens: &[TokenTree], identifiers: &mut HashSet<String>) {
+    for token in tokens {
+        match token {
+            IdentTT(ident) => {
+                identifiers.insert(ident.to_string());
+            }
+            GroupTT(group) => {
+                collect_identifiers(&group.stream().into_iter().collect::<Vec<_>>(), identifiers);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Rewrites inline declarations while sharing placeholder state across nested groups.
+fn rewrite_nested_type_declarations_inner(
+    tokens: Vec<TokenTree>,
+    identifiers: &mut HashSet<String>,
+    next_placeholder: &mut usize,
+) -> syn::Result<(TokenStream, Vec<NestedDeclaration>)> {
     let mut output = TokenStream::new();
     let mut declarations = Vec::new();
     let mut index = 0;
 
     while index < tokens.len() {
         if let Some((length, declaration)) = parse_inline_type_declaration(&tokens[index..])? {
-            output.extend([IdentTT(declaration.ident.clone())]);
-            declarations.push(declaration);
+            let placeholder = loop {
+                let spelling = format!("__strutuct_inline_declaration_{next_placeholder}");
+                *next_placeholder += 1;
+                if identifiers.insert(spelling.clone()) {
+                    break Ident::new(&spelling, declaration.ident.span());
+                }
+            };
+            output.extend([IdentTT(placeholder.clone())]);
+            declarations.push(NestedDeclaration {
+                placeholder,
+                declaration,
+            });
             index += length;
             continue;
         }
@@ -455,8 +555,11 @@ fn rewrite_nested_type_declarations(
 
         match tokens[index].clone() {
             GroupTT(group) => {
-                let (stream, mut nested) =
-                    rewrite_nested_type_declarations(group.stream().into_iter().collect())?;
+                let (stream, mut nested) = rewrite_nested_type_declarations_inner(
+                    group.stream().into_iter().collect(),
+                    identifiers,
+                    next_placeholder,
+                )?;
                 let mut rewritten = Group::new(group.delimiter(), stream);
                 rewritten.set_span(group.span());
                 output.extend([GroupTT(rewritten)]);
@@ -512,8 +615,7 @@ pub(crate) fn strutuct(input: TokenStream) -> TokenStream {
     let result = split_config_prefix(input)
         .and_then(|(_, input)| parse2::<Invocation>(input))
         .and_then(|mut invocation| {
-            let attrs = propagated_declaration_attrs(&invocation.declaration.attrs);
-            propagate_declaration_attrs(&mut invocation.declaration.body, &attrs)?;
+            merge_declaration_attrs(&mut invocation.declaration, &[])?;
             lower_declaration(invocation.declaration, Options::default())
         })
         .map(|declaration| declaration.items.into_iter().collect());
@@ -523,12 +625,37 @@ pub(crate) fn strutuct(input: TokenStream) -> TokenStream {
 
 /// Selects root attributes that generated nested declarations must also carry.
 fn propagated_declaration_attrs(attrs: &[Attribute]) -> Vec<Attribute> {
-    attrs.to_vec()
+    attrs
+        .iter()
+        .filter(|attribute| !is_doc(attribute) && !is_underive(attribute))
+        .cloned()
+        .collect()
+}
+
+/// Reports whether an attribute is documentation local to one generated item.
+fn is_doc(attribute: &Attribute) -> bool {
+    attribute.path().is_ident("doc")
 }
 
 /// Reports whether an attribute declares one or more derived traits.
 fn is_derive(attribute: &Attribute) -> bool {
     attribute.path().is_ident("derive")
+}
+
+/// Reports whether an attribute removes traits from one generated branch.
+fn is_underive(attribute: &Attribute) -> bool {
+    attribute.path().is_ident("underive")
+}
+
+/// Retains attributes that determine whether a generated item exists.
+fn conditional_compilation_attrs(attrs: &[Attribute]) -> Vec<Attribute> {
+    attrs
+        .iter()
+        .filter(|attribute| {
+            attribute.path().is_ident("cfg") || attribute.path().is_ident("cfg_attr")
+        })
+        .cloned()
+        .collect()
 }
 
 /// Applies inherited declaration attributes to every nested generated type.
@@ -555,7 +682,7 @@ fn propagate_declaration_attrs(body: &mut DeclarationBody, attrs: &[Attribute]) 
                         }
                     }
                     EnumVariant::Generated { declaration, .. } => {
-                        propagate_nested_declaration_attrs(declaration, attrs)?;
+                        merge_declaration_attrs(declaration, attrs)?;
                     }
                     EnumVariant::Unit(_) => {}
                 }
@@ -570,12 +697,12 @@ fn propagate_declaration_attrs(body: &mut DeclarationBody, attrs: &[Attribute]) 
 fn propagate_type_attrs(expression: &mut TypeExpression, attrs: &[Attribute]) -> syn::Result<()> {
     match &mut expression.base {
         TypeBase::Rust { nested, .. } => {
-            for declaration in nested {
-                propagate_nested_declaration_attrs(declaration, attrs)?;
+            for nested in nested {
+                merge_declaration_attrs(&mut nested.declaration, attrs)?;
             }
         }
         TypeBase::Nested(declaration) => {
-            propagate_nested_declaration_attrs(declaration, attrs)?;
+            merge_declaration_attrs(declaration, attrs)?;
         }
     }
 
@@ -602,11 +729,17 @@ fn extend_unique_paths(paths: &mut Vec<Path>, additions: impl IntoIterator<Item 
     }
 }
 
+/// Removes every requested trait path while ignoring paths that are absent.
+fn remove_paths(paths: &mut Vec<Path>, removals: impl IntoIterator<Item = Path>) {
+    let removals = removals
+        .into_iter()
+        .map(|path| path.to_token_stream().to_string())
+        .collect::<Vec<_>>();
+    paths.retain(|path| !removals.contains(&path.to_token_stream().to_string()));
+}
+
 /// Merges inherited attributes into one declaration and recursively visits its body.
-fn propagate_nested_declaration_attrs(
-    declaration: &mut Declaration,
-    attrs: &[Attribute],
-) -> syn::Result<()> {
+fn merge_declaration_attrs(declaration: &mut Declaration, attrs: &[Attribute]) -> syn::Result<()> {
     let derive_span = declaration
         .attrs
         .iter()
@@ -621,8 +754,17 @@ fn propagate_nested_declaration_attrs(
     {
         extend_unique_paths(&mut derives, parse_derive_paths(attribute)?);
     }
+    for attribute in declaration
+        .attrs
+        .iter()
+        .filter(|attribute| is_underive(attribute))
+    {
+        remove_paths(&mut derives, parse_derive_paths(attribute)?);
+    }
 
-    declaration.attrs.retain(|attribute| !is_derive(attribute));
+    declaration
+        .attrs
+        .retain(|attribute| !is_derive(attribute) && !is_underive(attribute));
     if !derives.is_empty() {
         declaration.attrs.insert(
             0,
@@ -630,7 +772,11 @@ fn propagate_nested_declaration_attrs(
         );
     }
 
-    for attribute in attrs.iter().filter(|attribute| !is_derive(attribute)).rev() {
+    for attribute in attrs
+        .iter()
+        .filter(|attribute| !is_derive(attribute) && !is_underive(attribute) && !is_doc(attribute))
+        .rev()
+    {
         if !declaration.attrs.iter().any(|existing| {
             existing.to_token_stream().to_string() == attribute.to_token_stream().to_string()
         }) {
@@ -681,6 +827,7 @@ fn parse_declaration(
     visibility: Option<Visibility>,
     keyword: Option<DeclarationKeyword>,
     ident: Ident,
+    name: DeclarationName,
     input: ParseStream,
 ) -> syn::Result<Declaration> {
     if input.is_empty() {
@@ -704,6 +851,7 @@ fn parse_declaration(
         options,
         visibility,
         ident,
+        name,
         body,
     })
 }
@@ -786,7 +934,7 @@ fn parse_struct_fields(input: ParseStream) -> syn::Result<Vec<StructField>> {
         if !nested.is_empty() {
             let mut field_attrs = Vec::with_capacity(attrs.len());
             for attribute in attrs {
-                if is_derive(&attribute) {
+                if is_derive(&attribute) || is_underive(&attribute) {
                     for declaration in &mut *nested {
                         declaration.attrs.push(attribute.clone());
                     }
@@ -795,10 +943,13 @@ fn parse_struct_fields(input: ParseStream) -> syn::Result<Vec<StructField>> {
                 }
             }
             attrs = field_attrs;
-        } else if let Some(derive) = attrs.iter().find(|attribute| is_derive(attribute)) {
+        } else if let Some(modifier) = attrs
+            .iter()
+            .find(|attribute| is_derive(attribute) || is_underive(attribute))
+        {
             return Err(Error::new_spanned(
-                derive,
-                "a local derive requires an inline generated field type",
+                modifier,
+                "a local derive modifier requires an inline generated field type",
             ));
         }
         fields.push(StructField {
@@ -820,7 +971,10 @@ fn parse_struct_fields(input: ParseStream) -> syn::Result<Vec<StructField>> {
 /// Returns every declaration generated anywhere inside one field type.
 fn nested_declarations_mut(expression: &mut TypeExpression) -> Vec<&mut Declaration> {
     match &mut expression.base {
-        TypeBase::Rust { nested, .. } => nested.iter_mut().collect(),
+        TypeBase::Rust { nested, .. } => nested
+            .iter_mut()
+            .map(|nested| &mut nested.declaration)
+            .collect(),
         TypeBase::Nested(declaration) => vec![declaration],
     }
 }
@@ -884,7 +1038,15 @@ fn parse_named_declaration(
     if input.peek(Brace) {
         let body;
         syn::braced!(body in input);
-        parse_declaration(attrs, options, visibility, keyword, ident, &body)
+        parse_declaration(
+            attrs,
+            options,
+            visibility,
+            keyword,
+            ident,
+            DeclarationName::Exact,
+            &body,
+        )
     } else {
         validate_declaration_keyword(keyword, &DeclarationBody::Unit)?;
         Ok(Declaration {
@@ -892,6 +1054,7 @@ fn parse_named_declaration(
             options,
             visibility,
             ident,
+            name: DeclarationName::Exact,
             body: DeclarationBody::Unit,
         })
     }
@@ -906,7 +1069,7 @@ fn parse_enum_variants(input: ParseStream) -> syn::Result<Vec<ParsedEnumVariant>
         let options = take_options(&mut attrs)?;
         let visibility = parse_visibility(input)?;
         let keyword = parse_declaration_keyword(input)?;
-        let kind = if input.peek(Token![|]) {
+        let mut kind = if input.peek(Token![|]) {
             EnumVariant::Implicit(Box::new(input.parse()?))
         } else if input.peek(Paren) {
             let content;
@@ -940,6 +1103,7 @@ fn parse_enum_variants(input: ParseStream) -> syn::Result<Vec<ParsedEnumVariant>
                         visibility.clone(),
                         keyword,
                         ident,
+                        DeclarationName::Relative,
                         &content,
                     )?),
                 }
@@ -970,6 +1134,29 @@ fn parse_enum_variants(input: ParseStream) -> syn::Result<Vec<ParsedEnumVariant>
             ));
         }
 
+        let mut nested = enum_variant_declarations_mut(&mut kind);
+        if !nested.is_empty() {
+            let mut variant_attrs = Vec::with_capacity(attrs.len());
+            for attribute in attrs {
+                if is_derive(&attribute) || is_underive(&attribute) {
+                    for declaration in &mut nested {
+                        declaration.attrs.push(attribute.clone());
+                    }
+                } else {
+                    variant_attrs.push(attribute);
+                }
+            }
+            attrs = variant_attrs;
+        } else if let Some(modifier) = attrs
+            .iter()
+            .find(|attribute| is_derive(attribute) || is_underive(attribute))
+        {
+            return Err(Error::new_spanned(
+                modifier,
+                "a local derive modifier requires an inline generated payload type",
+            ));
+        }
+
         variants.push(ParsedEnumVariant {
             attrs,
             options,
@@ -984,6 +1171,19 @@ fn parse_enum_variants(input: ParseStream) -> syn::Result<Vec<ParsedEnumVariant>
     Ok(variants)
 }
 
+/// Returns declarations generated directly by one enum variant payload.
+fn enum_variant_declarations_mut(kind: &mut EnumVariant) -> Vec<&mut Declaration> {
+    match kind {
+        EnumVariant::Implicit(ty) => nested_declarations_mut(ty),
+        EnumVariant::Tuple { fields, .. } => fields
+            .iter_mut()
+            .flat_map(nested_declarations_mut)
+            .collect(),
+        EnumVariant::Generated { declaration, .. } => vec![declaration],
+        EnumVariant::Unit(_) => Vec::new(),
+    }
+}
+
 /// Lowers a declaration after recursively lowering all nested declarations.
 fn lower_declaration(
     declaration: Declaration,
@@ -994,6 +1194,7 @@ fn lower_declaration(
         options: local_options,
         visibility,
         ident,
+        name: _,
         body,
     } = declaration;
     let options = options.with(local_options);
@@ -1024,17 +1225,19 @@ fn lower_unit(
     visibility: Visibility,
     ident: Ident,
 ) -> syn::Result<LoweredDeclaration> {
+    let macro_attrs = conditional_compilation_attrs(&attrs);
     let documentation = LitStr::new(
         &format!("Unit struct generated by `strutuct!` for `{ident}`."),
         ident.span(),
     );
     let items = vec![
         quote! {
+            #[allow(dead_code)]
             #(#attrs)*
             #[doc = #documentation]
             #visibility struct #ident;
         },
-        emit_unit_macro(&ident),
+        emit_unit_macro(&ident, &macro_attrs),
     ];
 
     Ok(LoweredDeclaration {
@@ -1052,12 +1255,13 @@ fn lower_struct(
     fields: Vec<StructField>,
     options: Options,
 ) -> syn::Result<LoweredDeclaration> {
+    let macro_attrs = conditional_compilation_attrs(&attrs);
     let mut items = Vec::new();
     let mut lowered_fields = Vec::with_capacity(fields.len());
 
     for field in fields {
         let field_options = options.with(field.options);
-        let lowered = lower_type(field.ty, field_options)?;
+        let lowered = lower_type(field.ty, field_options, &ident)?;
         items.extend(lowered.items);
         let field_attrs = field.attrs;
         let field_visibility = effective_visibility(field.visibility, field_options.public);
@@ -1079,13 +1283,14 @@ fn lower_struct(
         ident.span(),
     );
     items.push(quote! {
+        #[allow(dead_code)]
         #(#attrs)*
         #[doc = #documentation]
         #visibility struct #ident {
             #(#lowered_fields),*
         }
     });
-    items.push(emit_struct_macro(&ident));
+    items.push(emit_struct_macro(&ident, &macro_attrs));
 
     Ok(LoweredDeclaration {
         items,
@@ -1102,12 +1307,13 @@ fn lower_tuple(
     fields: Vec<TypeExpression>,
     options: Options,
 ) -> syn::Result<LoweredDeclaration> {
+    let macro_attrs = conditional_compilation_attrs(&attrs);
     let mut items = Vec::new();
     let mut lowered_fields = Vec::with_capacity(fields.len());
     let field_visibility = effective_visibility(None, options.public);
 
     for (index, field) in fields.into_iter().enumerate() {
-        let lowered = lower_type(field, options)?;
+        let lowered = lower_type(field, options, &ident)?;
         items.extend(lowered.items);
         let field_ty = lowered.ty;
         let field_documentation = LitStr::new(
@@ -1125,11 +1331,12 @@ fn lower_tuple(
         ident.span(),
     );
     items.push(quote! {
+        #[allow(dead_code)]
         #(#attrs)*
         #[doc = #documentation]
         #visibility struct #ident(#(#lowered_fields),*);
     });
-    items.push(emit_tuple_macro(&ident));
+    items.push(emit_tuple_macro(&ident, &macro_attrs));
 
     Ok(LoweredDeclaration {
         items,
@@ -1146,6 +1353,7 @@ fn lower_enum(
     variants: Vec<ParsedEnumVariant>,
     options: Options,
 ) -> syn::Result<LoweredDeclaration> {
+    let macro_attrs = conditional_compilation_attrs(&attrs);
     let mut items = Vec::new();
     let mut lowered_variants = Vec::with_capacity(variants.len());
     let mut macro_arms = Vec::new();
@@ -1163,7 +1371,7 @@ fn lower_enum(
             EnumVariant::Implicit(ty) => {
                 let mut ty = *ty;
                 apply_visibility_to_nested_type(&mut ty, variant_visibility);
-                let lowered = lower_type(ty, variant_options)?;
+                let lowered = lower_type(ty, variant_options, &ident)?;
                 items.extend(lowered.items);
                 let payload_name = lowered.name.ok_or_else(|| {
                     Error::new(
@@ -1239,7 +1447,7 @@ fn lower_enum(
                 }
                 let mut fields = fields
                     .into_iter()
-                    .map(|field| lower_type(field, variant_options))
+                    .map(|field| lower_type(field, variant_options, &ident))
                     .collect::<syn::Result<Vec<_>>>()?;
                 for field in &mut fields {
                     items.append(&mut field.items);
@@ -1294,18 +1502,20 @@ fn lower_enum(
                     attrs: declaration_attrs,
                     options: declaration_options,
                     visibility: declaration_visibility,
-                    ident: _,
+                    ident: declaration_ident,
+                    name: declaration_name,
                     body,
                 } = *declaration;
-                let payload_ident =
-                    concatenate(&[&ident, &variant_ident], variant_options.reverse_concat);
 
                 match (product_variants, body) {
                     (false, DeclarationBody::Struct(fields)) => {
+                        // This declaration becomes a struct-like variant rather than an item.
+                        // Its attributes have already propagated into generated field types;
+                        // retargeting them onto the variant would change their syntactic target.
                         let mut lowered_fields = Vec::with_capacity(fields.len());
                         for field in fields {
                             let field_options = variant_options.with(field.options);
-                            let lowered = lower_type(field.ty, field_options)?;
+                            let lowered = lower_type(field.ty, field_options, &ident)?;
                             items.extend(lowered.items);
                             let field_attrs = field.attrs;
                             let field_ident = field.ident;
@@ -1330,20 +1540,21 @@ fn lower_enum(
                         );
                         lowered_variants.push(quote! {
                             #(#variant_attrs)*
-                            #(#declaration_attrs)*
                             #[doc = #variant_documentation]
                             #variant_ident { #(#lowered_fields),* }
                         });
                     }
                     (_, body) => {
-                        let lowered = lower_declaration(
+                        let lowered = lower_nested_declaration(
                             Declaration {
                                 attrs: declaration_attrs,
                                 options: declaration_options,
                                 visibility: declaration_visibility,
-                                ident: payload_ident,
+                                ident: declaration_ident,
+                                name: declaration_name,
                                 body,
                             },
+                            &ident,
                             variant_options,
                         )?;
                         items.extend(lowered.items);
@@ -1388,13 +1599,14 @@ fn lower_enum(
         ident.span(),
     );
     items.push(quote! {
+        #[allow(dead_code)]
         #(#attrs)*
         #[doc = #documentation]
         #visibility enum #ident {
             #(#lowered_variants),*
         }
     });
-    items.push(emit_enum_macro(&ident, &macro_arms));
+    items.push(emit_enum_macro(&ident, &macro_arms, &macro_attrs));
 
     Ok(LoweredDeclaration {
         items,
@@ -1436,12 +1648,13 @@ fn nested_variant_arm(
 }
 
 /// Emits a same-name macro that constructs a generated unit struct.
-fn emit_unit_macro(ident: &Ident) -> TokenStream {
+fn emit_unit_macro(ident: &Ident, attrs: &[Attribute]) -> TokenStream {
     let documentation = LitStr::new(
         &format!("Constructs a `{ident}` value generated by `strutuct!`."),
         ident.span(),
     );
     quote! {
+        #(#attrs)*
         #[doc = #documentation]
         #[allow(unused_macros)]
         macro_rules! #ident {
@@ -1453,14 +1666,24 @@ fn emit_unit_macro(ident: &Ident) -> TokenStream {
 }
 
 /// Lowers a type expression and marks wrapped recursive edges as terminal.
-fn lower_type(expression: TypeExpression, options: Options) -> syn::Result<LoweredType> {
+fn lower_type(
+    expression: TypeExpression,
+    options: Options,
+    parent: &Ident,
+) -> syn::Result<LoweredType> {
     let TypeExpression { base, wrappers } = expression;
     let mut lowered = match base {
         TypeBase::Rust { ty, nested } => {
-            let ty = *ty;
+            let mut ty = *ty;
             let mut items = Vec::new();
-            for declaration in nested {
-                items.extend(lower_declaration(declaration, options)?.items);
+            for nested in nested {
+                let declaration = lower_nested_declaration(nested.declaration, parent, options)?;
+                ReplacePlaceholder {
+                    placeholder: &nested.placeholder,
+                    replacement: &declaration.ident,
+                }
+                .visit_type_mut(&mut ty);
+                items.extend(declaration.items);
             }
             LoweredType {
                 name: type_name(&ty),
@@ -1471,7 +1694,7 @@ fn lower_type(expression: TypeExpression, options: Options) -> syn::Result<Lower
             }
         }
         TypeBase::Nested(declaration) => {
-            let declaration = lower_declaration(*declaration, options)?;
+            let declaration = lower_nested_declaration(*declaration, parent, options)?;
             LoweredType {
                 ty: declaration.ident.to_token_stream(),
                 name: Some(declaration.ident),
@@ -1496,6 +1719,20 @@ fn lower_type(expression: TypeExpression, options: Options) -> syn::Result<Lower
     Ok(lowered)
 }
 
+/// Resolves a nested declaration name against its generated parent before lowering.
+fn lower_nested_declaration(
+    mut declaration: Declaration,
+    parent: &Ident,
+    options: Options,
+) -> syn::Result<LoweredDeclaration> {
+    if matches!(declaration.name, DeclarationName::Relative) {
+        let options = options.with(declaration.options);
+        declaration.ident = concatenate(&[parent, &declaration.ident], options.reverse_concat);
+        declaration.name = DeclarationName::Exact;
+    }
+    lower_declaration(declaration, options)
+}
+
 /// Extracts a deterministic suffix from a path-like Rust type.
 fn type_name(ty: &Type) -> Option<Ident> {
     match ty {
@@ -1511,12 +1748,13 @@ fn type_name(ty: &Type) -> Option<Ident> {
 }
 
 /// Emits a same-name macro that constructs a generated struct literal.
-fn emit_struct_macro(ident: &Ident) -> TokenStream {
+fn emit_struct_macro(ident: &Ident, attrs: &[Attribute]) -> TokenStream {
     let documentation = LitStr::new(
         &format!("Constructs a `{ident}` value generated by `strutuct!`."),
         ident.span(),
     );
     quote! {
+        #(#attrs)*
         #[doc = #documentation]
         #[allow(unused_macros)]
         macro_rules! #ident {
@@ -1528,12 +1766,13 @@ fn emit_struct_macro(ident: &Ident) -> TokenStream {
 }
 
 /// Emits a same-name macro that constructs a generated tuple struct.
-fn emit_tuple_macro(ident: &Ident) -> TokenStream {
+fn emit_tuple_macro(ident: &Ident, attrs: &[Attribute]) -> TokenStream {
     let documentation = LitStr::new(
         &format!("Constructs a `{ident}` value generated by `strutuct!`."),
         ident.span(),
     );
     quote! {
+        #(#attrs)*
         #[doc = #documentation]
         #[allow(unused_macros)]
         macro_rules! #ident {
@@ -1545,12 +1784,17 @@ fn emit_tuple_macro(ident: &Ident) -> TokenStream {
 }
 
 /// Emits a same-name macro whose specialized arms fold nested variant paths.
-fn emit_enum_macro(ident: &Ident, specialized_arms: &[TokenStream]) -> TokenStream {
+fn emit_enum_macro(
+    ident: &Ident,
+    specialized_arms: &[TokenStream],
+    attrs: &[Attribute],
+) -> TokenStream {
     let documentation = LitStr::new(
         &format!("Constructs an `{ident}` value generated by `strutuct!`."),
         ident.span(),
     );
     quote! {
+        #(#attrs)*
         #[doc = #documentation]
         #[allow(unused_macros)]
         macro_rules! #ident {
@@ -1596,6 +1840,50 @@ mod tests {
         syn::parse_str(input).unwrap()
     }
 
+    /// Returns the attributes emitted on one generated nominal declaration.
+    fn declaration_attrs<'a>(file: &'a syn::File, name: &str) -> &'a [Attribute] {
+        file.items
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Enum(item) if item.ident == name => Some(item.attrs.as_slice()),
+                syn::Item::Struct(item) if item.ident == name => Some(item.attrs.as_slice()),
+                _ => None,
+            })
+            .expect("generated declaration")
+    }
+
+    /// Returns normalized trait paths from a generated declaration's derive list.
+    fn derived_traits(file: &syn::File, name: &str) -> Vec<String> {
+        declaration_attrs(file, name)
+            .iter()
+            .filter(|attribute| is_derive(attribute))
+            .flat_map(|attribute| parse_derive_paths(attribute).expect("derive paths"))
+            .map(|path| path.to_token_stream().to_string())
+            .collect()
+    }
+
+    /// Returns literal documentation strings attached to an item or field.
+    fn documentation(attrs: &[Attribute]) -> Vec<String> {
+        attrs
+            .iter()
+            .filter_map(|attribute| {
+                let syn::Meta::NameValue(meta) = &attribute.meta else {
+                    return None;
+                };
+                if !meta.path.is_ident("doc") {
+                    return None;
+                }
+                let syn::Expr::Lit(expression) = &meta.value else {
+                    return None;
+                };
+                let syn::Lit::Str(text) = &expression.lit else {
+                    return None;
+                };
+                Some(text.value())
+            })
+            .collect()
+    }
+
     /// Compares generated and expected items without depending on whitespace.
     fn assert_expands_to(input: &str, expected: &str) {
         assert_eq!(
@@ -1604,30 +1892,32 @@ mod tests {
         );
     }
 
-    /// Hoists a nested enum before the struct that refers to it.
+    /// Hoists a relatively named nested enum before the struct that refers to it.
     #[test]
     fn lowers_nested_enum_in_struct_field() {
         assert_expands_to(
             "S a: A { A1, A2, A3 }, b: B,",
             r#"
-                #[doc = "Enum generated by `strutuct!` for `A`."]
-                pub enum A {
-                    #[doc = "Variant `A::A1` generated by `strutuct!`."]
+                #[allow(dead_code)]
+                #[doc = "Enum generated by `strutuct!` for `SA`."]
+                pub enum SA {
+                    #[doc = "Variant `SA::A1` generated by `strutuct!`."]
                     A1,
-                    #[doc = "Variant `A::A2` generated by `strutuct!`."]
+                    #[doc = "Variant `SA::A2` generated by `strutuct!`."]
                     A2,
-                    #[doc = "Variant `A::A3` generated by `strutuct!`."]
+                    #[doc = "Variant `SA::A3` generated by `strutuct!`."]
                     A3
                 }
-                #[doc = "Constructs an `A` value generated by `strutuct!`."]
+                #[doc = "Constructs an `SA` value generated by `strutuct!`."]
                 #[allow(unused_macros)]
-                macro_rules! A {
-                    ($($variant:tt)+) => { A:: $($variant)+ };
+                macro_rules! SA {
+                    ($($variant:tt)+) => { SA:: $($variant)+ };
                 }
+                #[allow(dead_code)]
                 #[doc = "Struct generated by `strutuct!` for `S`."]
                 pub struct S {
                     #[doc = "Field `S::a` generated by `strutuct!`."]
-                    pub a: A,
+                    pub a: SA,
                     #[doc = "Field `S::b` generated by `strutuct!`."]
                     pub b: B
                 }
@@ -1677,8 +1967,8 @@ mod tests {
         };
 
         assert_eq!(derives_for("Root"), ["Clone", "Default"]);
-        assert_eq!(derives_for("Branch"), ["Clone", "Debug", "Default"]);
-        assert_eq!(derives_for("Leaf"), ["Clone", "Debug", "Default"]);
+        assert_eq!(derives_for("RootBranch"), ["Clone", "Debug", "Default"]);
+        assert_eq!(derives_for("RootBranchLeaf"), ["Clone", "Debug", "Default"]);
     }
 
     /// Hoists an inline declaration from nested generic arguments before its consumer.
@@ -1690,10 +1980,10 @@ mod tests {
         .into_token_stream()
         .to_string();
 
-        assert!(expanded.contains("pub enum Content"));
+        assert!(expanded.contains("pub enum RootContent"));
         assert!(expanded.contains("derive (Debug)"));
-        assert!(expanded.contains("pub value : Delimited < Option < Content > >"));
-        assert!(expanded.find("pub enum Content") < expanded.find("pub struct Root"));
+        assert!(expanded.contains("pub value : Delimited < Option < RootContent > >"));
+        assert!(expanded.find("pub enum RootContent") < expanded.find("pub struct Root"));
     }
 
     /// Accepts Rust-like root braces, visibility, and shape keywords.
@@ -1785,11 +2075,11 @@ mod tests {
         .into_token_stream()
         .to_string();
 
-        assert!(expanded.contains("pub values : Vec < Choice >"));
-        assert!(expanded.contains("enum Choice"));
-        assert!(!expanded.contains("pub enum Choice"));
-        assert!(expanded.contains("enum NestedChoice"));
-        assert!(!expanded.contains("pub enum NestedChoice"));
+        assert!(expanded.contains("pub values : Vec < ChoiceHolder >"));
+        assert!(expanded.contains("enum ChoiceHolder"));
+        assert!(!expanded.contains("pub enum ChoiceHolder"));
+        assert!(expanded.contains("enum NestedChoiceHolder"));
+        assert!(!expanded.contains("pub enum NestedChoiceHolder"));
     }
 
     /// Duplicates arbitrary root declaration attributes onto generated descendants.
@@ -1802,6 +2092,62 @@ mod tests {
         assert_eq!(expanded.matches("# [repr (C)]").count(), 2);
     }
 
+    /// Keeps documentation on its source declaration or field instead of inheriting it.
+    #[test]
+    fn keeps_documentation_local() {
+        let expanded = expand(
+            r#"
+                #[doc = "root only"]
+                Root
+                #[doc = "field only"]
+                child: #[doc = "child only"] Child { A, B },
+            "#,
+        );
+
+        let root_docs = documentation(declaration_attrs(&expanded, "Root"));
+        let child_docs = documentation(declaration_attrs(&expanded, "RootChild"));
+        let field_docs = expanded
+            .items
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Struct(item) if item.ident == "Root" => item
+                    .fields
+                    .iter()
+                    .find(|field| field.ident.as_ref().is_some_and(|ident| ident == "child"))
+                    .map(|field| documentation(&field.attrs)),
+                _ => None,
+            })
+            .expect("generated field");
+
+        assert!(root_docs.iter().any(|doc| doc == "root only"));
+        assert!(!child_docs.iter().any(|doc| doc == "root only"));
+        assert!(child_docs.iter().any(|doc| doc == "child only"));
+        assert!(field_docs.iter().any(|doc| doc == "field only"));
+    }
+
+    /// Subtracts local traits and propagates the reduced derive list down the branch.
+    #[test]
+    fn underive_reduces_the_inherited_branch() {
+        let expanded = expand(
+            "#[derive(Debug, Clone, Eq)] #[underive(Eq)] Root #[underive(Clone, Hash)] child: Child { leaf: Leaf { value: u8 } },",
+        );
+
+        assert_eq!(derived_traits(&expanded, "Root"), ["Debug", "Clone"]);
+        assert_eq!(derived_traits(&expanded, "RootChild"), ["Debug"]);
+        assert_eq!(derived_traits(&expanded, "RootChildLeaf"), ["Debug"]);
+
+        let enum_branch =
+            expand("#[derive(Debug, Clone)] Root #[underive(Clone)] Branch { Leaf { A, B } }");
+        assert_eq!(derived_traits(&enum_branch, "RootBranch"), ["Debug"]);
+        assert_eq!(derived_traits(&enum_branch, "RootBranchLeaf"), ["Debug"]);
+
+        let named_payload = expand(
+            "#[derive(Debug, Clone)] Root #[underive(Clone)] Branch |Payload| { Leaf { A, B } }",
+        );
+        assert_eq!(derived_traits(&named_payload, "Payload"), ["Debug"]);
+        assert_eq!(derived_traits(&named_payload, "PayloadLeaf"), ["Debug"]);
+    }
+
     /// Keeps generic commas inside the type while hoisting declarations from grouped arguments.
     #[test]
     fn lowers_declarations_from_multiple_generic_arguments() {
@@ -1809,10 +2155,118 @@ mod tests {
             .into_token_stream()
             .to_string();
 
-        for declaration in ["Left", "Right", "Deep"] {
+        for declaration in ["RootLeft", "RootRight", "RootDeep"] {
             assert!(expanded.contains(&format!("pub enum {declaration}")));
         }
-        assert!(expanded.contains("pub value : Either < Left , (Right , Option < Deep >) >"));
+        assert!(
+            expanded
+                .contains("pub value : Either < RootLeft , (RootRight , Option < RootDeep >) >")
+        );
+    }
+
+    /// Resolves relative names through ordinary type syntax and resets at exact names.
+    #[test]
+    fn resolves_relative_names_across_type_contexts() {
+        let expanded = expand(
+            r#"
+                Root
+                direct: Direct { A, B },
+                optional: Optional { A, B }?,
+                boxed: Boxed { A, B }*,
+                generic: Vec<Generic { A, B }>,
+                grouped: (Grouped { A, B },),
+                array: [Element { A, B }; 2],
+                exact: |Exact| { child: Child { A, B } },
+                existing: Existing,
+            "#,
+        )
+        .into_token_stream()
+        .to_string();
+
+        for declaration in [
+            "RootDirect",
+            "RootOptional",
+            "RootBoxed",
+            "RootGeneric",
+            "RootGrouped",
+            "RootElement",
+            "Exact",
+            "ExactChild",
+        ] {
+            assert!(
+                expanded.contains(&format!("pub enum {declaration}"))
+                    || expanded.contains(&format!("pub struct {declaration}")),
+                "missing declaration `{declaration}` in {expanded}",
+            );
+        }
+        assert!(expanded.contains("pub direct : RootDirect"));
+        assert!(expanded.contains("Option < RootOptional >"));
+        assert!(expanded.contains("Box < RootBoxed >"));
+        assert!(expanded.contains("Vec < RootGeneric >"));
+        assert!(expanded.contains("(RootGrouped ,)"));
+        assert!(expanded.contains("[RootElement ; 2]"));
+        assert!(expanded.contains("pub exact : Exact"));
+        assert!(expanded.contains("pub existing : Existing"));
+        assert!(!expanded.contains("enum RootExisting"));
+    }
+
+    /// Does not retarget declaration attributes when a product is inlined as a variant.
+    #[test]
+    fn does_not_attach_declaration_attrs_to_inlined_struct_variants() {
+        let expanded = expand(
+            "#[derive(Debug, PartialEq)] #[repr(C)] #[strutuct(product_variants = false)] Root Branch { child: Child { A, B } }",
+        );
+        let root = expanded
+            .items
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Enum(item) if item.ident == "Root" => Some(item),
+                _ => None,
+            })
+            .expect("generated root enum");
+        let branch = root
+            .variants
+            .iter()
+            .find(|variant| variant.ident == "Branch")
+            .expect("inlined struct variant");
+
+        assert!(branch.attrs.iter().all(|attribute| !is_derive(attribute)));
+        assert!(
+            branch
+                .attrs
+                .iter()
+                .all(|attribute| !attribute.path().is_ident("repr"))
+        );
+        assert_eq!(
+            derived_traits(&expanded, "RootChild"),
+            ["Debug", "PartialEq"]
+        );
+        assert!(
+            declaration_attrs(&expanded, "RootChild")
+                .iter()
+                .any(|attribute| attribute.path().is_ident("repr"))
+        );
+    }
+
+    /// Applies conditional compilation equally to declarations and constructor macros.
+    #[test]
+    fn guards_constructor_macros_with_declaration_cfg() {
+        let expanded = expand("#[cfg(any())] Root Branch { A, B }");
+        let macros = expanded
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                syn::Item::Macro(item) => Some(item),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(macros.len(), 2);
+        assert!(macros.iter().all(|item| {
+            item.attrs
+                .iter()
+                .any(|attribute| attribute.path().is_ident("cfg"))
+        }));
     }
 
     /// Leaves nested-looking tokens inside a type macro for that macro to interpret.

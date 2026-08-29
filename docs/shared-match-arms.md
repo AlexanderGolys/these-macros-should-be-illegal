@@ -4,6 +4,15 @@ Rust or-patterns require every repeated binding to have the same concrete type.
 `shared_match_arms!` instead clones one RHS into several ordinary match arms,
 so each binding is type-checked independently:
 
+<div class="highlight-comparison-key">
+  <strong>You write</strong>
+  <strong>Roughly expands to</strong>
+</div>
+
+<div class="highlight-comparison">
+
+<div class="highlight-comparison-pane">
+
 ```rust
 use these_macros_should_be_illegal::shared_match_arms;
 
@@ -22,6 +31,29 @@ let text = shared_match_arms! {
 assert_eq!(text, "3");
 ```
 
+</div>
+
+<div class="highlight-comparison-pane">
+
+```rust,ignore
+enum Value {
+    Number(u32),
+    Character(char),
+}
+
+let value = Value::Number(3);
+let text = match value {
+    Value::Number(value) => value.to_string(),
+    Value::Character(value) => value.to_string(),
+};
+
+assert_eq!(text, "3");
+```
+
+</div>
+
+</div>
+
 The invented `||` joins complete arm patterns, not Rust or-patterns. The
 expansion above contains two independent arms with the same RHS.
 
@@ -29,10 +61,24 @@ expansion above contains two independent arms with the same RHS.
 
 Parenthesize a component when it has its own guard:
 
+<div class="highlight-comparison-key">
+  <strong>You write</strong>
+  <strong>Roughly expands to</strong>
+</div>
+
+<div class="highlight-comparison">
+
+<div class="highlight-comparison-pane">
+
 ```rust
-# use these_macros_should_be_illegal::shared_match_arms;
-# enum Value { Number(u32), Character(char) }
-# let value = Value::Number(3);
+use these_macros_should_be_illegal::shared_match_arms;
+
+enum Value {
+    Number(u32),
+    Character(char),
+}
+
+let value = Value::Number(3);
 let selected = shared_match_arms! {
     match value {
         (Value::Number(value) if value > 0)
@@ -41,8 +87,33 @@ let selected = shared_match_arms! {
         _ => false,
     }
 };
-# assert!(selected);
+
+assert!(selected);
 ```
+
+</div>
+
+<div class="highlight-comparison-pane">
+
+```rust,ignore
+enum Value {
+    Number(u32),
+    Character(char),
+}
+
+let value = Value::Number(3);
+let selected = match value {
+    Value::Number(value) if value > 0 => true,
+    Value::Character(value) if value.is_ascii() => true,
+    _ => false,
+};
+
+assert!(selected);
+```
+
+</div>
+
+</div>
 
 Logical OR remains ordinary Rust when it occurs inside a component guard:
 

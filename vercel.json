@@ -1,0 +1,5 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "cargo install mdbook --version 0.5.2 --locked && cargo install mdbook-tsitter --version 1.1.2 --locked && mdbook build",
+  "outputDirectory": "target/book"
+}
