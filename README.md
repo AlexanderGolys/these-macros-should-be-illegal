@@ -12,17 +12,47 @@ the caveats and implementation yapping are further down.
 cargo add these-macros-should-be-illegal
 ```
 
-## Keep enum descriptions beside their variants
+## Give an object function-like syntax without erasing its type
 
-`discriminated_str` lets you write descriptions exactly where you look for them:
-beside the variants. Fixed text, stored text, selected fields, and missing
-descriptions can all live in the same enum:
+`callable` aliases one method of a user-owned trait to the crate's structural
+calling convention. `make_fn!` then creates both a local value and its
+same-name invocation macro:
 
 ```rust
-#[discriminated_str(description)]
+use these_macros_should_be_illegal::{callable, make_fn};
+
+#[callable(apply)]
+trait Action {
+    fn apply(&self, point: usize) -> usize;
+}
+
+struct Shift(usize);
+
+impl Action for Shift {
+    fn apply(&self, point: usize) -> usize {
+        point + self.0
+    }
+}
+
+make_fn!(sigma = Shift(3));
+
+assert_eq!(sigma!(2), 5);
+```
+
+`sigma` remains a `Shift`, so its ordinary structural methods remain available;
+only `sigma!` occupies the macro namespace.
+
+## Generate small enum methods beside their variants
+
+`enum_fn` lets you write match-arm expressions exactly where you look for them:
+beside the variants. Fixed values, selected fields, closures, and missing arms
+can all live in the same enum:
+
+```rust
+#[enum_fn(description: &str)]
 enum Failure<'a> {
     Timeout = "the operation timed out",
-    Message(String),
+    Message(String) = 0,
     Context { code: u16, text: &'a str } = text,
     Undescribed(u16),
 }
@@ -39,7 +69,7 @@ assert_eq!(Failure::Undescribed(7).description(), None);
 If selecting one field is not enough, use a closure over all the fields:
 
 ```rust
-#[discriminated_str(display: String)]
+#[enum_fn(display: String)]
 enum Name {
     Qualified(String, String) = |module, item| format!("{module}::{item}"),
     Anonymous = "<anonymous>",
@@ -50,6 +80,26 @@ assert_eq!(
     "syntax::Expr",
 );
 ```
+
+## Give variants genuine string discriminants
+
+`discriminated_str` assigns every variant one unique literal and generates a
+forward method plus a same-name delegating constructor macro:
+
+```rust
+#[discriminated_str(name)]
+enum Token {
+    Ident(String) = "ident",
+    End = "end",
+}
+
+let token = Token!("ident", String::from("value"));
+assert_eq!(token.name(), "ident");
+assert!(matches!(Token!("end"), Token::End));
+```
+
+The literal chooses the variant during expansion; the remaining expressions
+are passed directly to its ordinary Rust constructor.
 
 ## Declare small algebraic type families together
 
@@ -167,44 +217,39 @@ pub fn greeting() -> String {
 }
 ```
 
-## `discriminated_str` details
+## `enum_fn` details
 
-The name inside the attribute becomes the method name. Results are borrowed by
-default; write `: String` when you want an owned result. `: &str` is also
-accepted when you want to be explicit:
+The name and type inside the attribute become the method signature. The macro
+does not infer, clone, or convert its result:
 
 ```rust
-#[discriminated_str(label: String)]
+#[enum_fn(label: String)]
 enum OwnedLabel {
-    Fixed = "fixed",
-    Dynamic(String),
+    Fixed = String::from("fixed"),
+    Dynamic(String) = |value| (*value).clone(),
 }
 ```
 
 The rules are intentionally simple:
 
-- `Variant = "text"` supplies a fixed description;
-- a sole `String` or `&str` field is inferred automatically;
+- `Variant = expression` supplies an ordinary match-arm expression;
 - `Variant(T, String) = 1` selects a zero-based tuple field;
 - `Variant { text: String } = text` selects a named field;
 - `Variant(A, B) = |a, b| expression` gets every field in declaration order;
-- a variant with no usable description produces `None`.
+- a variant with no RHS produces `None`.
 
 The generated accessor invokes the closure with borrowed field bindings. Rust
 checks its argument count, body, and return type.
 
-The return type works itself out from the whole enum:
-
-- all fixed descriptions produce `const fn -> &'static str`;
-- any selected, inferred, or computed description produces `fn -> &str`;
-- any missing description wraps the result in `Option`;
-- fixed-or-missing enums retain `const fn -> Option<&'static str>`;
-- `: String` produces `String` or `Option<String>` instead.
+Any missing arm wraps the declared result in `Option`. Literal expressions can
+retain a `const fn`; ordinary closures make it runtime. Use
+`const { |arguments| expression }` to explicitly inline a const-compatible
+closure without downgrading the method.
 
 Missing descriptions can use their variant names instead of `None`:
 
 ```rust
-#[discriminated_str(description = stringify)]
+#[enum_fn(description: &'static str = stringify)]
 enum State {
     Explicit = "custom spelling",
     Generated,
@@ -333,6 +378,26 @@ injections. Complete occurrence paths keep equal leaf types in different
 branches distinct. Joining stops at products, generic containers, and postfix
 wrappers. A depth-`N` chain produces `N` functions whose total composed body
 size is `O(N²)`—paths are never refactored or combinatorially enumerated.
+
+## Transform macro structure itself
+
+`reflect!` exchanges two macro invocation nodes around an opaque body:
+
+```rust
+let reflected = reflect!(add_one, double; 3);
+// double! { add_one! { 3 } }
+```
+
+`perm!` applies conventional cycle notation to comma-separated token trees and
+fixes every position beyond the largest mentioned index:
+
+```text
+perm! { ((1 4 3)), a, b, c, d, e }
+    -> c, b, d, a, e
+```
+
+See the [meta-transformer documentation](docs/meta-transformers.md) for the
+expansion contract, right-to-left cycle composition, and raw-output caveat.
 
 ## The boring but important token rules
 

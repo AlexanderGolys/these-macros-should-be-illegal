@@ -1,10 +1,14 @@
 # Macros
 
-The crate currently has two kinds of macro.
+The crate currently has three broad kinds of macro.
 
 The first kind generates ordinary Rust from compact input:
 
-- [`discriminated_str`](discriminated_str.md) works on an enum declaration;
+- [`callable` and `make_fn!`](callable.md) give objects function-like macro
+  syntax while retaining their original types and methods;
+- [`discriminated_str`](discriminated_str.md) creates a unique string mapping
+  and a literal-selected constructor macro;
+- [`enum_fn`](enum_fn.md) turns per-variant expressions into a method;
 - [`strutuct!`](strutuct.md), also exported as `emmun!`, generates related
   structs, enums, and constructor macros;
 - [`qf!`](qf.md) rewrites one Rust type.
@@ -22,3 +26,11 @@ The second kind rewrites raw token streams recursively:
 
 Read [How token rewriting behaves](token-rewriting.md) before combining the
 second group with attributes or macros that consume their own private syntax.
+
+The third kind transforms macro and token-stream structure itself:
+
+- [`reflect!`](meta-transformers.md#reflecting-invocations) exchanges two
+  nested invocation nodes around an opaque body;
+- [`perm!`](meta-transformers.md#permuting-token-trees) applies a finite
+  permutation to comma-separated token trees while fixing the remaining
+  positions.

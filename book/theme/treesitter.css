@@ -29,6 +29,9 @@
 
 /* Light themes (light, rust) — Tomorrow palette; also the default. */
 :root {
+  /* Two 68-column code panes (the longest example plus two columns), their
+     mdBook padding, and the comparison gap. All content shares this measure. */
+  --content-max-width: 119.75rem;
   --ts-red:    #d70025;
   --ts-orange: #b21e00;
   --ts-yellow: #946800;
@@ -70,35 +73,66 @@
   --ts-keyword:   var(--ts-purple);
   --ts-string:    var(--ts-green);
   --ts-escape:    var(--ts-cyan);
+  --ts-string-special: var(--ts-escape);
+  --ts-character-special: var(--ts-escape);
   --ts-number:    var(--ts-orange);
+  --ts-constant:  var(--ts-number);
+  --ts-builtin:   var(--ts-special);
   --ts-function:  var(--ts-blue);
   --ts-declaration: var(--ts-cyan);
   --ts-type:      var(--ts-yellow);
+  --ts-constructor: var(--ts-type);
   --ts-special:   var(--ts-red);
   --ts-namespace: var(--ts-purple);
   --ts-attribute: var(--ts-yellow);
+  --ts-operator:  currentColor;
+  --ts-variable:  currentColor;
+  --ts-parameter: var(--ts-special);
+  --ts-field:     var(--ts-function);
+  --ts-punctuation: currentColor;
+  --ts-punctuation-bracket: var(--ts-punctuation);
+  --ts-punctuation-delimiter: var(--ts-punctuation);
+  --ts-punctuation-special: var(--ts-special);
+  --ts-error:     var(--ts-special);
   --ts-heading:   var(--ts-blue);
   --ts-link:      var(--ts-cyan);
 }
 
 /* ---- Layer 3: capture rules -------------------------------------------- */
 
-pre.treesitter > code {
-  /* Inherit mdBook's code background and base text colour. */
+pre.treesitter {
+  /* Tree-sitter owns the whole block, including its surface. Without this,
+     mdBook's bundled highlight.js theme can leave a light code block inside a
+     custom dark theme even though highlight.js no longer owns the tokens. */
+  background: var(--ts-code-bg, var(--quote-bg));
+  color: var(--fg);
+}
+
+pre.treesitter > code,
+pre.treesitter > code.hljs {
+  background: transparent;
   color: inherit;
 }
 
-/* The comparison chapters render identical source as a pair. Their grids widen
-   beyond mdBook's prose column on large screens, where real-world code benefits
-   from the extra room, then returns to the normal flow on smaller screens. */
+/* mdBook's bundled highlight.js 10 checks `language-rust` before it checks the
+   accompanying `no-highlight` class. It consequently merges `hljs-*` spans
+   into the spans already emitted by mdbook-tsitter. Keep those compatibility
+   wrappers inert so Tree-sitter remains the sole owner of token styling. */
+pre.treesitter [class^="hljs-"],
+pre.treesitter [class*=" hljs-"] {
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-decoration: inherit;
+}
+
+/* Comparison grids occupy the same measure as every other kind of content. */
 .highlight-comparison-key,
 .highlight-comparison {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  width: min(920px, calc(100vw - 380px));
-  margin-left: 50%;
+  width: 100%;
   column-gap: 1.5rem;
-  transform: translateX(-50%);
 }
 
 .highlight-comparison-key {
@@ -135,16 +169,7 @@ pre.treesitter > code {
   min-height: 100%;
 }
 
-@media (max-width: 1080px) {
-  .highlight-comparison-key,
-  .highlight-comparison {
-    width: 100%;
-    margin-left: 0;
-    transform: none;
-  }
-}
-
-@media (max-width: 760px) {
+@media (max-width: 48em) {
   .highlight-comparison-key,
   .highlight-comparison {
     grid-template-columns: minmax(0, 1fr);
@@ -167,12 +192,14 @@ pre.treesitter > code {
 .ts-character { color: var(--ts-string); }
 .ts-string-special,
 .ts-string-escape,
-.ts-string-regexp,
-.ts-character-special { color: var(--ts-escape); }
+.ts-string-regexp { color: var(--ts-escape); }
+.ts-string-special { color: var(--ts-string-special); }
+.ts-character-special { color: var(--ts-character-special); }
 .ts-number,
 .ts-float,
-.ts-boolean,
-.ts-constant { color: var(--ts-number); }
+.ts-boolean { color: var(--ts-number); }
+.ts-constant { color: var(--ts-constant); }
+.ts-constant-builtin { color: var(--ts-builtin); }
 
 /* Keywords and operators. */
 .ts-keyword { color: var(--ts-keyword); }
@@ -180,8 +207,9 @@ pre.treesitter > code {
 .ts-keyword-directive { color: var(--ts-keyword); }
 .ts-conditional,
 .ts-repeat { color: var(--ts-keyword); }
-/* Operators stay the base text colour — they should not compete with names. */
-.ts-operator { color: inherit; }
+.ts-operator { color: var(--ts-operator); }
+/* Queries occasionally expose nested syntax inside documentation comments. */
+.ts-comment .ts-operator { color: inherit; }
 
 /* Identifiers. */
 /* Definitions take their own hue so a call-heavy expression doesn't read as one
@@ -191,12 +219,13 @@ pre.treesitter > code {
 .ts-method { color: var(--ts-declaration); }
 .ts-function-call,
 .ts-method-call { color: var(--ts-function); }
-.ts-constructor { color: var(--ts-type); }
-.ts-variable { color: inherit; }
-.ts-variable-builtin { color: var(--ts-special); }
-.ts-variable-parameter { color: var(--ts-special); }
+.ts-constructor { color: var(--ts-constructor); }
+.ts-variable { color: var(--ts-variable); }
+.ts-variable-builtin { color: var(--ts-builtin); }
+.ts-variable-parameter { color: var(--ts-parameter); }
 .ts-property,
-.ts-field { color: var(--ts-function); }
+.ts-field,
+.ts-variable-member { color: var(--ts-field); }
 .ts-type,
 .ts-type-builtin { color: var(--ts-type); }
 .ts-namespace,
@@ -204,10 +233,10 @@ pre.treesitter > code {
 
 /* Punctuation reads as the surrounding text, just dimmed — it should never
    compete with the tokens it brackets. */
-.ts-punctuation,
-.ts-punctuation-bracket,
-.ts-punctuation-delimiter { color: inherit; opacity: 0.75; }
-.ts-punctuation-special { color: var(--ts-special); opacity: 1; }
+.ts-punctuation { color: var(--ts-punctuation); opacity: 0.75; }
+.ts-punctuation-bracket { color: var(--ts-punctuation-bracket); opacity: 0.75; }
+.ts-punctuation-delimiter { color: var(--ts-punctuation-delimiter); opacity: 0.75; }
+.ts-punctuation-special { color: var(--ts-punctuation-special); opacity: 1; }
 
 /* Markup captures (Markdown and similar prose grammars). */
 .ts-markup-heading { color: var(--ts-heading); }
@@ -224,7 +253,7 @@ pre.treesitter > code {
 .ts-markup-raw-block { color: inherit; }
 
 /* Tokens a grammar explicitly flags as errors (e.g. M2's `error`/`stderr`). */
-.ts-error { color: var(--ts-special); }
+.ts-error { color: var(--ts-error); }
 
 /* Other markup-ish captures used by some grammars. */
 .ts-tag { color: var(--ts-special); }

@@ -13,14 +13,17 @@ Import whichever macro you use:
 
 ```rust
 use these_macros_should_be_illegal::{
-    discriminated_str, emmun, forward_attributes, qf, shared_match_arms, strutuct,
+    discriminated_str, emmun, enum_fn, forward_attributes, qf, shared_match_arms,
+    strutuct,
 };
 ```
 
 ## Pick your crime
 
-- [`discriminated_str`](discriminated_str.md) generates an accessor from text
-  attached directly to enum variants or their fields.
+- [`discriminated_str`](discriminated_str.md) assigns each variant a unique
+  string and generates a literal-selected delegating constructor.
+- [`enum_fn`](enum_fn.md) generates a method from inline per-variant match-arm
+  expressions.
 - [`strutuct!`](strutuct.md), with `emmun!` as an exact alias, declares a small
   family of nested algebraic types in one place and generates constructor macros
   for them.

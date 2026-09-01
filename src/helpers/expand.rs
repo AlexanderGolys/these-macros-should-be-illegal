@@ -13,6 +13,8 @@ use syn::{
 
 use TokenTree::{Group as GroupTT, Ident as IdentTT, Punct as PunctTT};
 
+use crate::meta::invoke;
+
 use super::preprocessing::{ExpansionConfig, parse_config_option, split_config_prefix};
 
 /// Macro paths and shared options supplied before the module declaration.
@@ -132,7 +134,7 @@ fn inject(input: TokenStream, invocation_file: Option<PathBuf>) -> syn::Result<T
 
     for macro_path in arguments.macros.iter().rev() {
         let input = arguments.config.configure_input(body);
-        body = quote!(#macro_path! { #input });
+        body = invoke(macro_path, input);
     }
 
     let attrs: Vec<_> = module

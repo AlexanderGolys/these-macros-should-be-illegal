@@ -11,7 +11,8 @@
 .env.*
 !.env.example
 .vercel/
-
+**.json
+/concurrency.md
 # Editors and operating systems
 .idea/
 .vscode/

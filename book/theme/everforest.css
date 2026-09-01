@@ -1,13 +1,13 @@
-/* Everforest Medium, exposed as an additional mdBook theme. */
+/* Everforest Dark Hard, exposed as an additional mdBook theme. */
 .everforest {
-  --bg: #2d353b;
+  --bg: #272e33;
   --fg: #d3c6aa;
 
-  --sidebar-bg: #232a2e;
+  --sidebar-bg: #1e2326;
   --sidebar-fg: #9da9a0;
   --sidebar-non-existant: #7a8478;
   --sidebar-active: #a7c080;
-  --sidebar-spacer: #3d484d;
+  --sidebar-spacer: #374145;
 
   --scrollbar: #859289;
 
@@ -17,25 +17,25 @@
   --links: #7fbbb3;
   --inline-code-color: #dbbc7f;
 
-  --theme-popup-bg: #343f44;
-  --theme-popup-border: #56635f;
-  --theme-hover: #3d484d;
+  --theme-popup-bg: #2e383c;
+  --theme-popup-border: #4f5b58;
+  --theme-hover: #374145;
 
-  --quote-bg: #343f44;
+  --quote-bg: #2e383c;
   --quote-border: #83c092;
   --warning-border: #dbbc7f;
 
-  --table-border-color: #475258;
-  --table-header-bg: #3d484d;
-  --table-alternate-bg: #343f44;
+  --table-border-color: #414b50;
+  --table-header-bg: #374145;
+  --table-alternate-bg: #2e383c;
 
-  --searchbar-border-color: #56635f;
-  --searchbar-bg: #3d484d;
+  --searchbar-border-color: #4f5b58;
+  --searchbar-bg: #374145;
   --searchbar-fg: #d3c6aa;
-  --searchbar-shadow-color: #232a2e;
+  --searchbar-shadow-color: #1e2326;
   --searchresults-header-fg: #9da9a0;
-  --searchresults-border-color: #56635f;
-  --searchresults-li-bg: #343f44;
+  --searchresults-border-color: #4f5b58;
+  --searchresults-li-bg: #2e383c;
   --search-mark-bg: #dbbc7f;
 
   --color-scheme: dark;
@@ -44,7 +44,7 @@
   --copy-button-filter-hover: invert(91%) sepia(11%) saturate(465%) hue-rotate(358deg) brightness(89%) contrast(86%);
 
   --footnote-highlight: #7fbbb3;
-  --overlay-bg: rgba(35, 42, 46, 0.45);
+  --overlay-bg: rgba(30, 35, 38, 0.45);
 
   --blockquote-note-color: #7fbbb3;
   --blockquote-tip-color: #a7c080;
@@ -55,6 +55,7 @@
   --sidebar-header-border-color: #7fbbb3;
 
   /* Keep Tree-sitter highlighting in the same palette. */
+  --ts-code-bg: #374145;
   --ts-red: #e67e80;
   --ts-orange: #e69875;
   --ts-yellow: #dbbc7f;
@@ -63,4 +64,60 @@
   --ts-blue: #7fbbb3;
   --ts-purple: #d699b6;
   --ts-gray: #859289;
+
+  /* Everforest's own Tree-sitter semantics, rather than merely feeding its
+     hues through the generic mdBook map. */
+  --ts-keyword: #e67e80;
+  --ts-string: #83c092;
+  --ts-escape: #a7c080;
+  --ts-string-special: #dbbc7f;
+  --ts-character-special: #dbbc7f;
+  --ts-number: #d699b6;
+  --ts-constant: #d3c6aa;
+  --ts-builtin: #d699b6;
+  --ts-function: #a7c080;
+  --ts-declaration: #a7c080;
+  --ts-type: #dbbc7f;
+  --ts-constructor: #a7c080;
+  --ts-special: #dbbc7f;
+  --ts-namespace: #dbbc7f;
+  --ts-attribute: #d699b6;
+  --ts-operator: #e69875;
+  --ts-variable: #d3c6aa;
+  --ts-parameter: #d3c6aa;
+  --ts-field: #7fbbb3;
+  --ts-punctuation: #859289;
+  --ts-punctuation-bracket: #d3c6aa;
+  --ts-punctuation-delimiter: #859289;
+  --ts-punctuation-special: #7fbbb3;
+  --ts-error: #e67e80;
+  --ts-heading: #e69875;
+  --ts-link: #7fbbb3;
+}
+
+/* Fences not handled by mdbook-tsitter still fall back to highlight.js. Do not
+   let its bundled light palette punch a white rectangle through Everforest. */
+.everforest .hljs {
+  background: var(--ts-code-bg);
+  color: var(--fg);
+}
+
+/* Rust's generic override treats macros like keywords. Everforest assigns
+   function-like macros to the same green used for calls and constructors. */
+.everforest code.language-rust .ts-function-macro {
+  color: var(--ts-function);
+}
+
+.everforest .ts-keyword-operator {
+  color: var(--ts-operator);
+}
+
+.everforest code.language-rust .ts-label {
+  color: var(--ts-orange);
+}
+
+.everforest .ts-comment,
+.everforest .ts-spell {
+  color: var(--ts-gray);
+  font-style: italic;
 }

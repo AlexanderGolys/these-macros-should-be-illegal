@@ -20,36 +20,17 @@ use TokenTree::{Group as GroupTT, Ident as IdentTT, Punct as PunctTT};
 
 use crate::helpers::preprocessing::split_config_prefix;
 
-/// One complete invocation with declaration-local lowering options.
-struct Invocation {
-    /// Root algebraic declaration.
-    declaration: Declaration,
-}
-
 /// Optional behavior selected for one declaration family.
 #[derive(Clone, Copy)]
 struct Options {
-    /// Whether enums generate consuming inclusion functions for their constructor paths.
+    /// Whether enums generate consuming inclusion functions for constructor paths.
     inclusions: bool,
     /// Whether non-unit enum variants carry one explicit product value.
     product_variants: bool,
     /// Whether generated declarations and fields are public by default.
     public: bool,
-    /// Whether every existing identifier concatenation is emitted in reverse order.
+    /// Whether existing identifier concatenations are emitted in reverse order.
     reverse_concat: bool,
-}
-
-/// Options explicitly overridden on one declaration, field, or variant branch.
-#[derive(Clone, Copy, Default)]
-struct OptionOverrides {
-    /// Per-object override for generated enum inclusion functions.
-    inclusions: Option<bool>,
-    /// Per-object override for unary product variants.
-    product_variants: Option<bool>,
-    /// Per-object override for default public visibility.
-    public: Option<bool>,
-    /// Per-object override for identifier concatenation order.
-    reverse_concat: Option<bool>,
 }
 
 /// Supplies the default algebraic lowering behavior.
@@ -76,6 +57,19 @@ impl Options {
             reverse_concat: overrides.reverse_concat.unwrap_or(self.reverse_concat),
         }
     }
+}
+
+/// Options explicitly overridden on one declaration, field, or variant branch.
+#[derive(Clone, Copy, Default)]
+struct OptionOverrides {
+    /// Per-object override for generated enum inclusion functions.
+    inclusions: Option<bool>,
+    /// Per-object override for unary product variants.
+    product_variants: Option<bool>,
+    /// Per-object override for default public visibility.
+    public: Option<bool>,
+    /// Per-object override for identifier concatenation order.
+    reverse_concat: Option<bool>,
 }
 
 impl OptionOverrides {
@@ -592,7 +586,11 @@ struct LoweredType {
     /// Whether postfix syntax prevents direct recursive construction.
     wrapped: bool,
 }
-
+/// One complete invocation with declaration-local lowering options.
+struct Invocation {
+    /// Root algebraic declaration.
+    declaration: Declaration,
+}
 /// Parses one complete `strutuct!` invocation.
 impl Parse for Invocation {
     /// Parses declaration attributes, options, the root name, and its body.
