@@ -18,9 +18,9 @@ pub(crate) enum Case {
     Kebab,
     /// `SCREAMING_SNAKE_CASE`.
     ScreamingSnake,
-    /// `lowercase` without word separators.
+    /// Unicode lowercase while retaining existing separators.
     Lower,
-    /// `UPPERCASE` without word separators.
+    /// Unicode uppercase while retaining existing separators.
     Upper,
 }
 

@@ -6,6 +6,8 @@ mod excluded_macros;
 mod expand;
 /// Implements forwarding outer attributes into function-like macro inputs.
 mod forward_attributes;
+/// Names generated parameters so they cannot collide with written ones.
+pub(crate) mod fresh_name;
 /// Provides shared recursive token preprocessing and configuration handling.
 pub(crate) mod preprocessing;
 

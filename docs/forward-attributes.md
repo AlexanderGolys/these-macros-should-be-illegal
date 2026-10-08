@@ -54,6 +54,18 @@ were already attached to the first object in the macro input. `strutuct!` and
 `emmun!` interpret the left side as inherited attributes and configuration;
 local attributes on the right retain their branch-specific meaning.
 
+## Why the invocation is enough
+
+A function-like macro invocation in item position is already an
+attribute-compatible item shell. `forward_attributes` therefore does not need
+to invent a dummy struct: it parses only that shell, removes its outer
+attributes, and puts them at the front of the invocation's existing token
+group. Rust still leaves the receiving macro's private contents opaque.
+
+This is specifically an item-position bridge. It does not make a macro call in
+type, pattern, or nested expression position into a target for an attribute
+procedural macro.
+
 ## Expansion order
 
 `forward_attributes` must be the first active attribute. An active attribute

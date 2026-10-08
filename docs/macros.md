@@ -1,8 +1,12 @@
 # Macros
 
-The crate currently has three broad kinds of macro.
+The public macros fall into five families. The distinction is about what each
+macro is allowed to assume about its input, not about which procedural-macro
+kind happens to implement it.
 
-The first kind generates ordinary Rust from compact input:
+## Structured local syntax
+
+These macros parse a known local shape and generate ordinary Rust:
 
 - [`callable` and `make_fn!`](callable.md) give objects function-like macro
   syntax while retaining their original types and methods;
@@ -11,23 +15,48 @@ The first kind generates ordinary Rust from compact input:
 - [`enum_fn`](enum_fn.md) turns per-variant expressions into a method;
 - [`strutuct!`](strutuct.md), also exported as `emmun!`, generates related
   structs, enums, and constructor macros;
-- [`qf!`](qf.md) rewrites one Rust type.
+- [`overload_op`](overload-op.md) repeats one operator written for references
+  across its owned operand forms and its augmented assignment;
+- [`complete_ops`](complete-ops.md) adds the operators that follow from the
+  ones a type already has, such as subtraction from addition and negation.
 
-The second kind rewrites raw token streams recursively:
+## Ordinary Rust fragments and names
+
+These conveniences accept one ordinary Rust fragment or name:
+
+- [`qf!`](qf.md) recursively qualifies common paths in one Rust type;
+- the [name stringifiers](stringification.md#name-cases) convert one identifier
+  or string literal to a selected conventional case;
+- [`stringify_type!`](stringification.md#rust-types) parses one Rust type and
+  emits its compact, structure-preserving string name.
+
+## Recursive whole-stream extensions
+
+These macros rewrite arbitrary token trees recursively without assuming that
+the complete input is an item or expression:
 
 - [`shared_match_arms!`](shared-match-arms.md) duplicates one match-arm RHS
   across independently typed patterns;
-- [`forward_attributes`](forward-attributes.md) moves outer attributes behind
-  a `;` boundary inside any function-like macro invocation;
-- `literally_literal_string!` recognizes the deliberately invalid `@@"text"`;
-- `excluded_macros` marks macro invocations whose contents must remain opaque;
-- `expand!` loads an out-of-line module and applies one or more rewriting
-  macros before rustc parses its body.
+- [`literally_literal_string!`](literal-syntax.md#literally_literal_string)
+  recognizes the deliberately invalid `@@"text"`.
 
 Read [How token rewriting behaves](token-rewriting.md) before combining the
-second group with attributes or macros that consume their own private syntax.
+whole-stream extensions with attributes or macros that consume private syntax.
 
-The third kind transforms macro and token-stream structure itself:
+## Composition helpers
+
+These helpers transport or protect token streams for another macro:
+
+- [`forward_attributes`](forward-attributes.md) moves an item-position macro
+  invocation's outer attributes behind a `;` boundary in its opaque input;
+- [`excluded_macros`](literal-syntax.md#excluding-macro-inputs) marks macro
+  invocations whose contents a recursive transformation must leave opaque;
+- [`expand!`](literal-syntax.md#expand) loads one out-of-line module and wraps
+  its body in one or more whole-stream transformations before rustc parses it.
+
+## Meta-transformers
+
+These macros transform macro and token-stream structure itself:
 
 - [`reflect!`](meta-transformers.md#reflecting-invocations) exchanges two
   nested invocation nodes around an opaque body;

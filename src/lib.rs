@@ -34,11 +34,28 @@ mod meta;
 /// Small conveniences over otherwise ordinary Rust syntax.
 mod rast;
 
+/// Book pages that document no single macro, compiled so their examples stay correct.
+#[cfg(doctest)]
+mod book {
+    #[doc = include_str!("../docs/introduction.md")]
+    mod introduction {}
+    #[doc = include_str!("../docs/literal-syntax.md")]
+    mod literal_syntax {}
+    #[doc = include_str!("../docs/meta-transformers.md")]
+    mod meta_transformers {}
+    #[doc = include_str!("../docs/qf.md")]
+    mod qf {}
+    #[doc = include_str!("../docs/shared-match-arms.md")]
+    mod shared_match_arms {}
+    #[doc = include_str!("../docs/stringification.md")]
+    mod stringification {}
+}
+
 use flust::{literally_literal_string_impl, shared_match_arms_impl};
 use helpers::{excluded_macros_impl, expand_impl, forward_attributes_impl};
 use local::{
-    StringCase, callable_impl, discriminated_str_impl, enum_fn_impl, make_fn_impl, stringify_case,
-    stringify_type_impl, strutuct_impl,
+    StringCase, callable_impl, complete_ops_impl, discriminated_str_impl, enum_fn_impl,
+    make_fn_impl, overload_op_impl, stringify_case, stringify_type_impl, strutuct_impl,
 };
 use meta::{perm_impl, reflect_impl};
 use proc_macro::TokenStream;
@@ -156,7 +173,7 @@ pub fn stringify_screaming_snake_case(input: TokenStream) -> TokenStream {
     stringify_case(input.into(), StringCase::ScreamingSnake).into()
 }
 
-/// Converts an identifier or string literal to `lowercase` without separators.
+/// Lowercases an identifier or string literal while retaining its separators.
 ///
 /// ```
 /// use these_macros_should_be_illegal::stringify_lowercase;
@@ -167,7 +184,7 @@ pub fn stringify_lowercase(input: TokenStream) -> TokenStream {
     stringify_case(input.into(), StringCase::Lower).into()
 }
 
-/// Converts an identifier or string literal to `UPPERCASE` without separators.
+/// Uppercases an identifier or string literal while retaining its separators.
 ///
 /// ```
 /// use these_macros_should_be_illegal::stringify_uppercase;
@@ -326,6 +343,18 @@ pub fn expand(input: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn forward_attributes(arguments: TokenStream, item: TokenStream) -> TokenStream {
     forward_attributes_impl(arguments.into(), item.into()).into()
+}
+
+#[doc = include_str!("../docs/overload-op.md")]
+#[proc_macro_attribute]
+pub fn overload_op(arguments: TokenStream, item: TokenStream) -> TokenStream {
+    overload_op_impl(arguments.into(), item.into()).into()
+}
+
+#[doc = include_str!("../docs/complete-ops.md")]
+#[proc_macro_attribute]
+pub fn complete_ops(arguments: TokenStream, item: TokenStream) -> TokenStream {
+    complete_ops_impl(arguments.into(), item.into()).into()
 }
 
 #[doc = include_str!("../docs/strutuct.md")]

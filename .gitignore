@@ -12,7 +12,9 @@
 !.env.example
 .vercel/
 **.json
+!/vercel.json
 /concurrency.md
+
 # Editors and operating systems
 .idea/
 .vscode/
@@ -20,11 +22,17 @@
 *.swo
 .DS_Store
 
+# Local notes and agent configuration
 AGENTS.md
+CLAUDE.md
 TODO.md
 BUGS.md
 .agents/
 .ai/
+.claude/
 .codex/
+.cursor/
+/docs/reductive-declarations.md
+*.log
 .editorconfig
 .gitattributes

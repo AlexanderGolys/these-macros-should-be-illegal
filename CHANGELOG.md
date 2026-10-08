@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.8.0 - 2026-10-08
+
+### Added
+
+- `#[overload_op]` takes an operator implemented for references and generates
+  the owned-operand forms and both augmented assignments, delegating to the
+  borrowed impl without cloning. Works with any operator trait following the
+  `Trait`/`TraitAssign` naming convention, written by name or by path.
+- `#[complete_ops(Sub, Neg = <scalar>)]` completes subtraction from addition and
+  negation, and negation from a scalar multiplication.
+- `reflect!` accepts outer attributes before either invocation path and moves
+  them together with that invocation.
+- Book chapters on operator overloading, compile-time stringification, and
+  `forward_attributes`, with a `strutuct!` grammar reference. Every book page
+  with Rust examples is now compiled as a doctest.
+
+### Changed
+
+- `strutuct!` accepts a `struct` or `enum` keyword before an exact `|Payload|`
+  enum member and validates it against the inferred shape.
+
+### Fixed
+
+- `strutuct!` rejects a visibility on an enum member that generates no payload
+  type, instead of silently discarding it.
+- `stringify_lowercase` and `stringify_uppercase` documentation now states that
+  existing separators are retained.
+
 ## 0.7.0 - 2026-09-01
 
 ### Added

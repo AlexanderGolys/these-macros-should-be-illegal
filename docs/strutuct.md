@@ -148,6 +148,559 @@ This generates the `RequestMethod` enum, the `Request` struct, and same-name
 constructor macros. Braced `Method { ... }` is a relative generated name;
 write `|Method| { ... }` when the generated enum must be named exactly `Method`.
 
+## Declaration forms
+
+The forms below are the complete set of nominal declarations introduced by
+`strutuct!` itself. Ordinary Rust types may still be used as payloads, but they
+do not change how a declaration body is classified.
+
+### Root declarations
+
+A nonempty body produces a named-field struct, a tuple struct, or an enum. The
+body shape selects which one:
+
+```rust
+use these_macros_should_be_illegal::strutuct;
+
+strutuct! {
+    struct Record {
+        value: u8,
+        flag: bool,
+    }
+}
+
+strutuct! {
+    struct Pair {
+        (u8, u16)
+    }
+}
+
+strutuct! {
+    enum Choice {
+        First,
+        Second,
+    }
+}
+```
+
+A body beginning with `name: Type` is a named-field struct. A body consisting
+of exactly one parenthesized list of two or more types is a tuple struct. Every
+other nonempty body is an enum.
+
+The `struct` and `enum` keywords are optional checks on the inferred shape.
+They do not force a body to have that shape.
+
+#### Restrictions
+
+A root declaration cannot be empty or unit-like:
+
+```rust,compile_fail
+use these_macros_should_be_illegal::strutuct;
+
+strutuct! {
+    Empty {}
+}
+```
+
+A written keyword must agree with the inferred body:
+
+```rust,compile_fail
+use these_macros_should_be_illegal::strutuct;
+
+strutuct! {
+    enum NotAnEnum {
+        value: u8,
+    }
+}
+```
+
+```rust,compile_fail
+use these_macros_should_be_illegal::strutuct;
+
+strutuct! {
+    struct NotAStruct {
+        First,
+        Second,
+    }
+}
+```
+
+### Named-field structs
+
+Once the first member has the form `name: Type`, every member must be a named
+field. A field type may itself declare a relative type, an exactly named type,
+or an exactly named unit struct:
+
+```rust
+use these_macros_should_be_illegal::strutuct;
+
+pub struct Existing;
+
+strutuct! {
+    Structs {
+        plain: Existing,
+        relative: Relative {
+            value: Existing,
+        },
+        exact: |Exact| {
+            value: Existing,
+        },
+        marker: |Marker|,
+    }
+}
+```
+
+This declares `StructsRelative`, `Exact`, and the unit struct `Marker` in
+addition to `Structs`.
+
+Nested braced bodies use the same inference rules as roots. Consequently a
+field may declare any non-unit shape:
+
+```rust
+use these_macros_should_be_illegal::strutuct;
+
+pub struct Existing;
+
+strutuct! {
+    Container {
+        record: Record { value: Existing },
+        pair: Pair { (Existing, Existing) },
+        choice: Choice { First, Second },
+    }
+}
+```
+
+#### Restrictions
+
+Struct fields require commas. Once a body is inferred as a struct, an
+enum-shaped member cannot be mixed into it:
+
+```rust,compile_fail
+use these_macros_should_be_illegal::strutuct;
+
+strutuct! {
+    Mixed {
+        value: u8,
+        Variant,
+    }
+}
+```
+
+A relative name requires a nonempty braced body. Only an exact `|Name|` may
+declare a unit struct:
+
+```rust,compile_fail
+use these_macros_should_be_illegal::strutuct;
+
+strutuct! {
+    Holder {
+        marker: Marker {},
+    }
+}
+```
+
+### Tuple structs
+
+A tuple declaration is one complete parenthesized product containing at least
+two types. The rule is identical at the root and inside another declaration:
+
+```rust
+use these_macros_should_be_illegal::strutuct;
+
+pub struct Left;
+pub struct Right;
+
+strutuct! {
+    Pair {
+        (Left, Right)
+    }
+}
+
+strutuct! {
+    RelativeHolder {
+        pair: Pair { (Left, Right) },
+    }
+}
+
+strutuct! {
+    ExactHolder {
+        pair: |ExactPair| { (Left, Right) },
+    }
+}
+```
+
+These declarations produce `Pair`, `RelativeHolderPair`, and `ExactPair` as
+tuple structs.
+
+#### Restrictions
+
+There are no generated zero-field or one-field tuple structs. A single
+parenthesized type is instead the implicit enum-variant form:
+
+```rust,compile_fail
+use these_macros_should_be_illegal::strutuct;
+
+pub struct Existing;
+
+strutuct! {
+    struct OneField {
+        (Existing)
+    }
+}
+```
+
+An empty product is not a declaration body:
+
+```rust,compile_fail
+use these_macros_should_be_illegal::strutuct;
+
+strutuct! {
+    ZeroFields {
+        ()
+    }
+}
+```
+
+The product must be the entire body. Adding another member makes the body an
+enum body, where an implicit parenthesized variant may contain only one type:
+
+```rust,compile_fail
+use these_macros_should_be_illegal::strutuct;
+
+strutuct! {
+    PairAndMore {
+        (u8, u16),
+        More,
+    }
+}
+```
+
+### Enums
+
+An enum accepts unit variants, tuple-like variants, existing implicit payload
+types, and generated payload declarations:
+
+```rust
+use these_macros_should_be_illegal::strutuct;
+
+pub struct Existing;
+
+strutuct! {
+    Choice {
+        Unit,
+        EmptyTuple(),
+        ExistingPayload(Existing),
+        Product(Existing, Existing),
+        (Existing),
+
+        Record { value: Existing },
+        Pair { (Existing, Existing) },
+        Nested { First, Second },
+
+        Named |Payload| { First, Second },
+        |Implicit| { First, Second },
+        NamedMarker |Marker|,
+        |ImplicitMarker|,
+    }
+}
+```
+
+The forms mean:
+
+```text
+Unit                          unit variant
+EmptyTuple()                  empty tuple-like variant
+ExistingPayload(Existing)     named variant using an existing type
+Product(Existing, Existing)   named multi-field variant
+(Existing)                    existing payload with an inferred variant name
+
+Record { value: Existing }    variant plus relative named-field payload
+Pair { (Existing, Existing) } variant plus relative tuple payload
+Nested { First, Second }      variant plus relative enum payload
+
+Named |Payload| { ... }       named variant plus exact payload declaration
+|Implicit| { ... }            exact payload and inferred variant name
+NamedMarker |Marker|          named variant plus exact unit payload
+|ImplicitMarker|              exact unit payload and inferred variant name
+```
+
+`(Existing)` uses an already declared type. `|Implicit| { ... }` declares a new
+type. Parentheses and vertical bars are therefore not interchangeable.
+
+Commas between enum variants are optional when the next variant is already
+structurally recognizable:
+
+```rust
+use these_macros_should_be_illegal::strutuct;
+
+pub struct Existing;
+
+strutuct! {
+    Punctuation {
+        First
+        Second(Existing)
+        Third { A B }
+    }
+}
+```
+
+`Name` and `Name()` are both legal and distinct, just as they are in an
+ordinary Rust enum.
+
+#### Restrictions
+
+An implicit parenthesized variant accepts exactly one type:
+
+```rust,compile_fail
+use these_macros_should_be_illegal::strutuct;
+
+strutuct! {
+    BadImplicit {
+        (u8, u16)
+        Unit
+    }
+}
+```
+
+Its type must also have a final path segment from which a variant name can be
+formed. Name a non-path payload explicitly:
+
+```rust,compile_fail
+use these_macros_should_be_illegal::strutuct;
+
+strutuct! {
+    NoInferredName {
+        ((u8, u16))
+    }
+}
+```
+
+Parentheses never declare a generated payload type. The former contextual
+spellings are rejected:
+
+```rust,compile_fail
+use these_macros_should_be_illegal::strutuct;
+
+strutuct! {
+    OldSpelling {
+        Named(Payload) { First, Second }
+    }
+}
+```
+
+```rust,compile_fail
+use these_macros_should_be_illegal::strutuct;
+
+strutuct! {
+    OldImplicit {
+        (Payload) { First, Second }
+    }
+}
+```
+
+Braced payload declarations must be nonempty:
+
+```rust,compile_fail
+use these_macros_should_be_illegal::strutuct;
+
+strutuct! {
+    EmptyPayload {
+        Payload {}
+    }
+}
+```
+
+Rust-style enum discriminants are not part of the `strutuct!` declaration
+grammar:
+
+```rust,compile_fail
+use these_macros_should_be_illegal::strutuct;
+
+strutuct! {
+    Discriminants {
+        First = 1,
+        Second = 2,
+    }
+}
+```
+
+### Relative and exact names
+
+An unbarred nested declaration name is relative to its generated parent.
+Nesting continues to concatenate names:
+
+```rust
+use these_macros_should_be_illegal::strutuct;
+
+strutuct! {
+    Root {
+        Relative {
+            Leaf { value: u8 }
+        }
+        Named |Exact| {
+            Leaf { value: u8 }
+        }
+    }
+}
+```
+
+This declares `RootRelative` and `RootRelativeLeaf`. The bars reset the name,
+so the other branch declares `Exact` and `ExactLeaf`.
+
+An exact unit declaration is legal only where a nested type is expected:
+
+```rust
+use these_macros_should_be_illegal::strutuct;
+
+strutuct! {
+    Holder {
+        marker: |Marker|,
+    }
+}
+```
+
+#### Restrictions
+
+The root name is already exact and is written without bars:
+
+```rust,compile_fail
+use these_macros_should_be_illegal::strutuct;
+
+strutuct! {
+    |Root|
+}
+```
+
+An exact name is one identifier, not a path, and generated declarations do not
+accept generic parameter, bound, or `where` clauses:
+
+```rust,compile_fail
+use these_macros_should_be_illegal::strutuct;
+
+strutuct! {
+    Generic<T> {
+        value: T,
+    }
+}
+```
+
+### Attributes, visibility, and shape keywords
+
+Attributes and visibility may precede roots, named fields, and inline generated
+declarations. A declaration keyword may be added before an inline declaration
+to validate its inferred shape:
+
+```rust
+use these_macros_should_be_illegal::strutuct;
+
+#[derive(Debug)]
+pub struct Existing;
+
+strutuct! {
+    #[derive(Debug)]
+    pub struct Root {
+        #[doc = "A private generated branch."]
+        pub branch: #[derive(Clone)] priv enum Branch {
+            First,
+            Second,
+        },
+        marker: struct |Marker|,
+        existing: Existing,
+    }
+}
+```
+
+Here `pub` before `branch` is the visibility of the generated Rust field;
+`priv` before `enum Branch` is the visibility of `RootBranch`. Attributes before
+the field and attributes before its generated type likewise have different
+targets.
+
+The keyword is still only a validator:
+
+```rust,compile_fail
+use these_macros_should_be_illegal::strutuct;
+
+strutuct! {
+    Root {
+        choice: struct Choice { First, Second },
+    }
+}
+```
+
+Tuple declaration components are currently type expressions only: unlike named
+fields, they do not have DSL positions for individual field attributes or
+visibility.
+
+#### Member visibility and shape keywords
+
+A visibility before an enum member applies to the payload type that member
+generates. Rust variants always share their enum's visibility, so a visibility
+on a member that generates nothing is rejected rather than ignored:
+
+```rust,compile_fail
+use these_macros_should_be_illegal::strutuct;
+
+strutuct! {
+    VisibilityOnPlainVariants {
+        // error: visibility applies to a generated payload type
+        pub Unit,
+        priv Existing(u8),
+    }
+}
+```
+
+A shape keyword decorates any payload the member generates, relative or exact,
+and is checked against the shape inferred from its body:
+
+```rust
+use these_macros_should_be_illegal::strutuct;
+
+strutuct! {
+    ExactPayloadWithKeyword {
+        enum |Payload| { First, Second },
+        struct Named |Marker|,
+    }
+}
+
+let exact = ExactPayloadWithKeyword::PayloadExactPayloadWithKeyword(Payload::First);
+let named = ExactPayloadWithKeyword::Named(Marker);
+assert!(matches!(exact, ExactPayloadWithKeyword::PayloadExactPayloadWithKeyword(Payload::First)));
+assert!(matches!(named, ExactPayloadWithKeyword::Named(Marker)));
+```
+
+### Disambiguation
+
+The parser resolves every declaration body in this order:
+
+1. A leading `name: Type` makes the complete body a named-field struct.
+2. Otherwise, one complete `(A, B, ...)` body with at least two types makes a
+   tuple struct.
+3. Every other nonempty body is an enum.
+
+The important neighboring forms are therefore:
+
+```rust
+use these_macros_should_be_illegal::strutuct;
+
+pub struct Existing;
+
+strutuct! { Named { value: Existing } }
+strutuct! { Tuple { (Existing, Existing) } }
+strutuct! { Sum { First, Second } }
+strutuct! { OneParenthesized { (Existing) } }
+strutuct! { NamedVariant { Pair(Existing, Existing) } }
+strutuct! { EmptyTupleVariant { Empty() } }
+```
+
+`OneParenthesized` is an enum, not a one-field tuple struct.
+`NamedVariant` is an enum because `Pair` precedes the parentheses.
+`EmptyTupleVariant` is an enum with one fieldless tuple-like variant; it is not
+an empty declaration.
+
+This precedence leaves no token sequence with two possible declaration shapes.
+Some neighboring spellings intentionally mean different things, and invalid
+mixtures fail instead of falling through to another shape.
+
 ## Declaration shapes
 
 The body shape decides what gets generated:

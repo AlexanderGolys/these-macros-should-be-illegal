@@ -43,6 +43,20 @@ invoke(second, invoke(first, body))
 
 where `invoke` pairs one macro path with one opaque token stream.
 
+Outer attributes may precede either path and move together with that invocation:
+
+```text
+reflect!(#[a] first, #[b] second; body)
+    -> #[b] second! { #[a] first! { body } }
+```
+
+Whether a particular attribute is valid still depends on the Rust context in
+which the resulting invocation appears. The input describes invocation paths
+rather than parsing two complete existing macro calls, so `reflect!` always
+constructs braced invocations and does not preserve operand delimiters or
+trailing semicolons. An outer attribute written before `reflect!` itself belongs
+to the `reflect!` call, not either operand.
+
 ## Permuting token trees
 
 `perm!` uses ordinary one-based cycle notation. Separate positions with spaces:

@@ -101,6 +101,42 @@ assert!(matches!(Token!("end"), Token::End));
 The literal chooses the variant during expansion; the remaining expressions
 are passed directly to its ordinary Rust constructor.
 
+## Write an operator once, use it with any ownership
+
+`overload_op` takes the impl written for references and generates the owned
+forms and the augmented assignment; `complete_ops` adds the operators that
+follow from existing ones, such as subtraction from addition and negation:
+
+```rust
+#[derive(Debug, PartialEq)]
+#[complete_ops(Sub)]
+struct Vector(f64);
+
+#[overload_op]
+impl Add<&Vector> for &Vector {
+    type Output = Vector;
+
+    fn add(self, rhs: &Vector) -> Vector {
+        Vector(self.0 + rhs.0)
+    }
+}
+
+#[overload_op]
+impl Neg for &Vector {
+    type Output = Vector;
+
+    fn neg(self) -> Vector {
+        Vector(-self.0)
+    }
+}
+
+let mut total = Vector(1.0) + &Vector(2.0);
+total += Vector(3.0);
+assert_eq!(total - Vector(1.0), Vector(5.0));
+```
+
+Nothing is cloned: every generated impl delegates to the borrowed one.
+
 ## Declare small algebraic type families together
 
 `strutuct!` (also available as the wonderfully backward `emmun!`) lets you write

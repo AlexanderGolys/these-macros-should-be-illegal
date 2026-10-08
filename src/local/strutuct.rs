@@ -1378,10 +1378,11 @@ fn parse_enum_variants(input: ParseStream) -> syn::Result<Vec<ParsedEnumVariant>
     while !input.is_empty() {
         let mut attrs = input.call(Attribute::parse_outer)?;
         let options = take_options(&mut attrs)?;
+        let visibility_span = input.span();
         let visibility = parse_visibility(input)?;
-        let keyword = parse_declaration_keyword(input)?;
+        let mut keyword = parse_declaration_keyword(input)?;
         let mut kind = if input.peek(Token![|]) {
-            EnumVariant::Implicit(Box::new(input.parse()?))
+            EnumVariant::Implicit(Box::new(parse_exact_payload(input, keyword.take())?))
         } else if input.peek(Paren) {
             let content;
             parenthesized!(content in input);
@@ -1401,7 +1402,7 @@ fn parse_enum_variants(input: ParseStream) -> syn::Result<Vec<ParsedEnumVariant>
             if input.peek(Token![|]) {
                 EnumVariant::Tuple {
                     ident,
-                    fields: vec![input.parse()?],
+                    fields: vec![parse_exact_payload(input, keyword.take())?],
                 }
             } else if input.peek(Brace) {
                 let content;
@@ -1412,7 +1413,7 @@ fn parse_enum_variants(input: ParseStream) -> syn::Result<Vec<ParsedEnumVariant>
                         Vec::new(),
                         OptionOverrides::default(),
                         visibility.clone(),
-                        keyword,
+                        keyword.take(),
                         ident,
                         DeclarationName::Relative,
                         &content,
@@ -1433,9 +1434,7 @@ fn parse_enum_variants(input: ParseStream) -> syn::Result<Vec<ParsedEnumVariant>
             }
         };
 
-        if let Some(keyword) = keyword
-            && !matches!(&kind, EnumVariant::Generated { .. })
-        {
+        if let Some(keyword) = keyword {
             let span = match keyword {
                 DeclarationKeyword::Struct(span) | DeclarationKeyword::Enum(span) => span,
             };
@@ -1446,6 +1445,13 @@ fn parse_enum_variants(input: ParseStream) -> syn::Result<Vec<ParsedEnumVariant>
         }
 
         let mut nested = enum_variant_declarations_mut(&mut kind);
+        if visibility.is_some() && nested.is_empty() {
+            return Err(Error::new(
+                visibility_span,
+                "visibility applies to a generated payload type; \
+                 a variant always shares its enum's visibility",
+            ));
+        }
         if !nested.is_empty() {
             let mut variant_attrs = Vec::with_capacity(attrs.len());
             for attribute in attrs {
@@ -1480,6 +1486,20 @@ fn parse_enum_variants(input: ParseStream) -> syn::Result<Vec<ParsedEnumVariant>
     }
 
     Ok(variants)
+}
+
+/// Parses a direct `|Type|` payload, validating the shape keyword written before it.
+fn parse_exact_payload(
+    input: ParseStream,
+    keyword: Option<DeclarationKeyword>,
+) -> syn::Result<TypeExpression> {
+    let declaration =
+        parse_named_declaration(input, Vec::new(), OptionOverrides::default(), None, keyword)?;
+
+    Ok(TypeExpression {
+        base: TypeBase::Nested(Box::new(declaration)),
+        wrappers: parse_type_wrappers(input)?,
+    })
 }
 
 /// Returns declarations generated directly by one enum variant payload.
@@ -2623,6 +2643,44 @@ mod tests {
                 .expect("the mismatched keyword must be rejected");
 
             assert_eq!(error.to_string(), expected);
+        }
+    }
+
+    /// Validates a shape keyword written before a direct exact payload.
+    #[test]
+    fn validates_keywords_on_exact_payloads() {
+        let expanded = expand("Root { enum |Choice| { A, B }, struct Named |Marker| }")
+            .into_token_stream()
+            .to_string();
+        assert!(expanded.contains("pub enum Choice"), "{expanded}");
+        assert!(expanded.contains("pub struct Marker ;"), "{expanded}");
+
+        let error = parse2::<Invocation>(quote!(Root { struct |Choice| { A, B } }))
+            .err()
+            .expect("the mismatched keyword must be rejected");
+        assert_eq!(
+            error.to_string(),
+            "`struct` does not match the inferred enum declaration"
+        );
+    }
+
+    /// Rejects visibility on a variant that generates no payload type to apply it to.
+    #[test]
+    fn rejects_visibility_without_a_generated_payload() {
+        for input in [
+            quote!(Root { pub Unit }),
+            quote!(Root { priv Existing(u8) }),
+        ] {
+            let error = parse2::<Invocation>(input)
+                .err()
+                .expect("visibility without a generated payload must be rejected");
+
+            assert!(
+                error
+                    .to_string()
+                    .starts_with("visibility applies to a generated payload type"),
+                "{error}"
+            );
         }
     }
 
