@@ -3,7 +3,7 @@
 use proc_macro2::{Delimiter, Group, TokenStream, TokenTree};
 use quote::{ToTokens, quote};
 use syn::{
-    Arm, Attribute, Error, Expr, Pat, Token, parenthesized,
+    Arm, Attribute, Error, Pat, PatGuard, Token, parenthesized,
     parse::{Parse, ParseStream, discouraged::Speculative},
     parse2,
 };
@@ -14,13 +14,8 @@ use crate::helpers::preprocessing::split_config_prefix;
 
 use TokenTree::Group as GroupTT;
 
-/// One pattern and optional guard on the left of a shared arm.
-struct ArmAlternative {
-    /// Pattern parsed by Syn's ordinary match-pattern parser.
-    pat: Pat,
-    /// Optional guard belonging only to this alternative.
-    guard: Option<(Token![if], Box<Expr>)>,
-}
+/// One left-hand side of a shared arm, its own guard held as `Pat::Guard`.
+struct ArmAlternative(Pat);
 
 /// A Syn match arm extended with additional independently typed alternatives.
 struct SharedArm {
@@ -48,36 +43,37 @@ struct ArmPrefix {
 
 /// Parses one LHS using Syn, with a parenthesized local guard as the sole extension.
 impl Parse for ArmAlternative {
-    /// Parses either an ordinary pattern or `(pattern if guard)`.
+    /// Parses an arm pattern with Syn, or `(pattern if guard)` unwrapped from its parentheses.
     fn parse(input: ParseStream) -> syn::Result<Self> {
         if input.peek(syn::token::Paren) {
             let fork = input.fork();
             let content;
             parenthesized!(content in fork);
-            if let Ok(pat) = content.call(Pat::parse_multi_with_leading_vert)
-                && content.peek(Token![if])
-            {
-                let if_token = content.parse()?;
-                let guard = content.parse()?;
+            if let Ok(guarded @ Pat::Guard(_)) = content.call(parse_guarded_pat) {
                 if !content.is_empty() {
                     return Err(content.error("unexpected tokens after alternative guard"));
                 }
                 input.advance_to(&fork);
-                return Ok(Self {
-                    pat,
-                    guard: Some((if_token, Box::new(guard))),
-                });
+                return Ok(Self(guarded));
             }
         }
 
-        let pat = input.call(Pat::parse_multi_with_leading_vert)?;
-        let guard = if input.peek(Token![if]) {
-            Some((input.parse()?, Box::new(input.parse()?)))
-        } else {
-            None
-        };
-        Ok(Self { pat, guard })
+        input.call(parse_guarded_pat).map(Self)
     }
+}
+
+/// Parses a match-arm pattern and its optional guard, as Syn does for `Arm`.
+fn parse_guarded_pat(input: ParseStream) -> syn::Result<Pat> {
+    let pat = input.call(Pat::parse_multi_with_leading_vert)?;
+    if !input.peek(Token![if]) {
+        return Ok(pat);
+    }
+    Ok(Pat::Guard(PatGuard {
+        attrs: Vec::new(),
+        pat: Box::new(pat),
+        if_token: input.parse()?,
+        guard: input.parse()?,
+    }))
 }
 
 /// Parses the extended LHS before delegating the complete ordinary arm to Syn.
@@ -126,8 +122,33 @@ impl Parse for ArmPrefix {
     }
 }
 
+macro_docs! {
+    /// Clones a shared match-arm RHS for alternatives separated by `||`.
+    ///
+    /// Parenthesize `(pattern if guard)` when one alternative has its own guard.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use these_macros_should_be_illegal::shared_match_arms;
+    /// enum Value {
+    ///     Number(u32),
+    ///     Character(char),
+    /// }
+    ///
+    /// let value = Value::Number(3);
+    /// let text = shared_match_arms! {
+    ///     match value {
+    ///         Value::Number(value) || Value::Character(value) => value.to_string(),
+    ///     }
+    /// };
+    ///
+    /// assert_eq!(text, "3");
+    /// ```
+}
+
 /// Rewrites shared match-arm alternatives throughout a procedural macro input.
-pub(crate) fn shared_match_arms(input: TokenStream) -> TokenStream {
+pub fn shared_match_arms(input: TokenStream) -> TokenStream {
     expand(input).unwrap_or_else(Error::into_compile_error)
 }
 
@@ -146,13 +167,9 @@ fn parse_syn_arm(
     let fork = input.fork();
     let remaining: TokenStream = fork.parse()?;
     let token_count = remaining.clone().into_iter().count();
-    let pat = &first.pat;
-    let guard = first
-        .guard
-        .as_ref()
-        .map(|(if_token, guard)| quote!(#if_token #guard));
+    let ArmAlternative(pat) = first;
     let parsed = parse2::<ArmPrefix>(quote! {
-        #(#attrs)* #pat #guard #remaining
+        #(#attrs)* #pat #remaining
     })?;
     let consumed = token_count - parsed.remaining.into_iter().count();
 
@@ -201,8 +218,7 @@ fn lower_arms(arms: Vec<SharedArm>) -> TokenStream {
         for alternative in alternatives {
             Arm {
                 attrs: arm.attrs.clone(),
-                pat: alternative.pat,
-                guard: alternative.guard,
+                pat: alternative.0,
                 fat_arrow_token: arm.fat_arrow_token,
                 body: arm.body.clone(),
                 comma: arm.comma,

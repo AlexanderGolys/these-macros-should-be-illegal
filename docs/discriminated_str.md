@@ -1,3 +1,7 @@
+# `discriminated_str`
+
+API reference on docs.rs: [`discriminated_str`](https://docs.rs/these-macros-should-be-illegal/latest/these_macros_should_be_illegal/attr.discriminated_str.html).
+
 Assigns every enum variant one unique string literal. The generated method maps
 values to strings; a same-name macro maps literals and payloads back to variant
 constructors.
@@ -12,8 +16,6 @@ constructors.
 <div class="highlight-comparison-pane">
 
 ```rust
-use these_macros_should_be_illegal::discriminated_str;
-
 #[discriminated_str(name)]
 enum Token {
     Ident(String) = "ident",
@@ -69,8 +71,6 @@ The constructor macro follows the original variant shape:
 <div class="highlight-comparison-pane">
 
 ```rust
-use these_macros_should_be_illegal::discriminated_str;
-
 #[discriminated_str(code)]
 enum Error {
     Io(std::io::Error) = "io",

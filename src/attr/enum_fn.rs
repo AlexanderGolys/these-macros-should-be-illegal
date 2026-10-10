@@ -1,6 +1,8 @@
 //! Local enum-syntax extension for methods generated as match expressions.
 
 use proc_macro2::{Span, TokenStream};
+
+use crate::helpers::ungroup;
 use quote::quote;
 use syn::{
     Attribute, Error, Expr, ExprClosure, ExprConst, ExprLit, Fields, Ident, ItemEnum, Lit, LitStr,
@@ -58,10 +60,7 @@ impl Parse for Arguments {
         } else {
             MissingDescription::None
         };
-
-        if !input.is_empty() {
-            return Err(input.error("unexpected tokens after `enum_fn` arguments"));
-        }
+        input.parse::<Option<Token![,]>>()?;
 
         Ok(Self {
             method_name: method,
@@ -89,8 +88,30 @@ impl Parse for MissingDescription {
     }
 }
 
+macro_docs! {
+    /// Generates an enum method from per-variant expressions written beside the variants.
+    ///
+    /// The argument names the method and its return type; the expression after each
+    /// variant becomes that match arm's value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use these_macros_should_be_illegal::enum_fn;
+    ///
+    /// #[enum_fn(description: &'static str)]
+    /// enum Action {
+    ///     Quit = "quit the application",
+    ///     Submit = "evaluate the input",
+    /// }
+    ///
+    /// const QUIT: &str = Action::Quit.description();
+    /// assert_eq!(QUIT, "quit the application");
+    /// ```
+}
+
 /// Generates an enum method whose body is a match over its variants.
-pub(crate) fn enum_fn(arguments: TokenStream, item: TokenStream) -> TokenStream {
+pub fn enum_fn(arguments: TokenStream, item: TokenStream) -> TokenStream {
     let result = parse2::<Arguments>(arguments)
         .and_then(|arguments| parse2::<ItemEnum>(item).map(|item| (arguments, item)))
         .and_then(|(arguments, item)| expand(arguments, item));
@@ -109,7 +130,10 @@ fn expand(arguments: Arguments, mut item: ItemEnum) -> syn::Result<TokenStream> 
     let mut has_runtime_output = false;
     let mut optional = false;
     for variant in &mut item.variants {
-        let discriminant = variant.discriminant.take();
+        let discriminant = variant
+            .discriminant
+            .take()
+            .map(|(eq, expression)| (eq, ungroup::expr(&expression).clone()));
 
         let output = match (&variant.fields, discriminant) {
             (
@@ -124,7 +148,7 @@ fn expand(arguments: Arguments, mut item: ItemEnum) -> syn::Result<TokenStream> 
             ) => {
                 let position = index.base10_parse::<usize>()?;
                 let selectable_fields = if fields.unnamed.len() == 1 {
-                    match &fields.unnamed.first().expect("checked one field").ty {
+                    match ungroup::ty(&fields.unnamed.first().expect("checked one field").ty) {
                         Type::Tuple(tuple) => tuple.elems.len(),
                         _ => 1,
                     }
@@ -300,7 +324,7 @@ fn member_access(variant: &Variant, member: &Member) -> (TokenStream, TokenStrea
                 &variant.fields,
                 Fields::Unnamed(fields)
                     if fields.unnamed.len() == 1
-                        && matches!(&fields.unnamed[0].ty, Type::Tuple(_))
+                        && matches!(ungroup::ty(&fields.unnamed[0].ty), Type::Tuple(_))
             ) {
                 (quote!(Self::#ident { 0: value, .. }), quote!(&value.#index))
             } else {

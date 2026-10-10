@@ -1,5 +1,7 @@
 # `qf!`
 
+API reference on docs.rs: [`qf!`](https://docs.rs/these-macros-should-be-illegal/latest/these_macros_should_be_illegal/macro.qf.html).
+
 `qf!` recursively qualifies common unqualified standard-library types. It is
 mainly useful in generated code, where relying on imports from the caller would
 be impolite.
@@ -14,8 +16,6 @@ be impolite.
 <div class="highlight-comparison-pane">
 
 ```rust
-use these_macros_should_be_illegal::qf;
-
 type Messages = qf!(Option<Vec<String>>);
 
 let messages: Messages = Some(vec![String::from("hello")]);

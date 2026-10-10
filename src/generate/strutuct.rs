@@ -20,6 +20,41 @@ use TokenTree::{Group as GroupTT, Ident as IdentTT, Punct as PunctTT};
 
 use crate::helpers::preprocessing::split_config_prefix;
 
+macro_docs! {
+    /// Declares a family of nested types in place and hoists them into ordinary items.
+    ///
+    /// Inline bodies become structs, tuple structs or enums by shape; generated
+    /// declarations are public by default, and each gets a same-name constructor
+    /// macro. `emmun!` is an exact alias.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use these_macros_should_be_illegal::strutuct;
+    ///
+    /// strutuct! {
+    ///     Request
+    ///     method: Method { Get, Post },
+    ///     body: String?,
+    /// }
+    ///
+    /// let request = Request { method: RequestMethod::Get, body: None };
+    /// assert!(matches!(request.method, RequestMethod::Get));
+    /// ```
+}
+
+/// Expands one nested algebraic declaration into ordinary Rust items.
+pub fn strutuct(input: TokenStream) -> TokenStream {
+    let result = split_config_prefix(input)
+        .and_then(|(_, input)| parse2::<Invocation>(input))
+        .and_then(|mut invocation| {
+            merge_declaration_attrs(&mut invocation.declaration, &[])?;
+            lower_declaration(invocation.declaration, Options::default(), false)
+        })
+        .map(|declaration| declaration.items.into_iter().collect());
+
+    result.unwrap_or_else(Error::into_compile_error)
+}
 /// Optional behavior selected for one declaration family.
 #[derive(Clone, Copy)]
 struct Options {
@@ -919,18 +954,6 @@ fn parse_inline_type_declaration(
     Ok(Some((consumed, parsed.declaration)))
 }
 
-/// Expands one nested algebraic declaration into ordinary Rust items.
-pub(crate) fn strutuct(input: TokenStream) -> TokenStream {
-    let result = split_config_prefix(input)
-        .and_then(|(_, input)| parse2::<Invocation>(input))
-        .and_then(|mut invocation| {
-            merge_declaration_attrs(&mut invocation.declaration, &[])?;
-            lower_declaration(invocation.declaration, Options::default(), false)
-        })
-        .map(|declaration| declaration.items.into_iter().collect());
-
-    result.unwrap_or_else(Error::into_compile_error)
-}
 
 /// Selects root attributes that generated nested declarations must also carry.
 fn propagated_declaration_attrs(attrs: &[Attribute]) -> Vec<Attribute> {

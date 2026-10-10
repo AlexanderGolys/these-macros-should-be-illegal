@@ -1,5 +1,7 @@
 # Literal syntax and external modules
 
+API reference on docs.rs: [`literally_literal_string!`](https://docs.rs/these-macros-should-be-illegal/latest/these_macros_should_be_illegal/macro.literally_literal_string.html), [`expand!`](https://docs.rs/these-macros-should-be-illegal/latest/these_macros_should_be_illegal/macro.expand.html), [`excluded_macros`](https://docs.rs/these-macros-should-be-illegal/latest/these_macros_should_be_illegal/attr.excluded_macros.html).
+
 ## `literally_literal_string!`
 
 `literally_literal_string!` turns `@@"text"` into an owned `String`:
@@ -14,8 +16,6 @@
 <div class="highlight-comparison-pane">
 
 ```rust
-use these_macros_should_be_illegal::literally_literal_string;
-
 let greeting: String = literally_literal_string!(@@"hello");
 assert_eq!(greeting, "hello");
 ```
@@ -53,8 +53,6 @@ selected rewriting macros.
 <div class="highlight-comparison-pane">
 
 ```rust,ignore
-use these_macros_should_be_illegal::expand;
-
 expand!(
     literally_literal_string;
     mod experiments;

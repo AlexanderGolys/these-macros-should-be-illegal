@@ -1,18 +1,15 @@
 //! Consumer tests for compile-time name and type stringification.
 
-use these_macros_should_be_illegal::{
-    stringify_camel_case, stringify_kebab_case, stringify_lowercase, stringify_pascal_case,
-    stringify_screaming_snake_case, stringify_snake_case, stringify_type, stringify_uppercase,
-};
+use these_macros_should_be_illegal::stringify_as;
 
-const CAMEL: &str = stringify_camel_case!(some_HTTP_server);
-const PASCAL: &str = stringify_pascal_case!(some_HTTP_server);
-const SNAKE: &str = stringify_snake_case!(SomeHTTPServer);
-const KEBAB: &str = stringify_kebab_case!(SomeHTTPServer);
-const SCREAMING_SNAKE: &str = stringify_screaming_snake_case!(SomeHTTPServer);
-const LOWER: &str = stringify_lowercase!(Some_HTTP_Server);
-const UPPER: &str = stringify_uppercase!(Some_HTTP_Server);
-const FROM_KEBAB: &str = stringify_pascal_case!("some-http-server");
+const CAMEL: &str = stringify_as!(camel; some_HTTP_server);
+const PASCAL: &str = stringify_as!(pascal; some_HTTP_server);
+const SNAKE: &str = stringify_as!(snake; SomeHTTPServer);
+const KEBAB: &str = stringify_as!(kebab; SomeHTTPServer);
+const SCREAMING_SNAKE: &str = stringify_as!(screaming_snake; SomeHTTPServer);
+const LOWER: &str = stringify_as!(lower; Some_HTTP_Server);
+const UPPER: &str = stringify_as!(upper; Some_HTTP_Server);
+const FROM_KEBAB: &str = stringify_as!(pascal; "some-http-server");
 
 /// Every name conversion expands directly to a string literal.
 #[test]
@@ -30,9 +27,9 @@ fn converts_names_in_both_directions() {
 /// Type normalization is compact, stable across layout, and never an identifier.
 #[test]
 fn normalizes_rust_types() {
-    const SIMPLE: &str = stringify_type!(String);
-    const BORROWED: &str = stringify_type!(&'static mut Vec<Option<String>>);
-    const FUNCTION: &str = stringify_type!(fn((u8, u16), *const [u8; 4]) -> bool);
+    const SIMPLE: &str = stringify_as!(type; String);
+    const BORROWED: &str = stringify_as!(type; &'static mut Vec<Option<String>>);
+    const FUNCTION: &str = stringify_as!(type; fn((u8, u16), *const [u8; 4]) -> bool);
 
     assert_eq!(SIMPLE, "type:String");
     assert_eq!(BORROWED, "type:&'static mut Vec<Option<String>>");

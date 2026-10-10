@@ -1,3 +1,7 @@
+# `enum_fn`
+
+API reference on docs.rs: [`enum_fn`](https://docs.rs/these-macros-should-be-illegal/latest/these_macros_should_be_illegal/attr.enum_fn.html).
+
 Generates an enum method as an inline match expression.
 
 The attribute argument names the generated method and gives its return type.
@@ -13,8 +17,6 @@ An expression after a variant becomes that match arm's value:
 <div class="highlight-comparison-pane">
 
 ```rust
-use these_macros_should_be_illegal::enum_fn;
-
 #[enum_fn(description: &'static str)]
 enum Action {
     Quit = "quit the application",
@@ -68,8 +70,6 @@ selected expression is a shared field binding:
 <div class="highlight-comparison-pane">
 
 ```rust
-use these_macros_should_be_illegal::enum_fn;
-
 #[enum_fn(description: &str)]
 enum Message<'a> {
     Fixed = "fixed text",
@@ -134,8 +134,6 @@ including zero, is supported. Rust checks its arity, body, and return type:
 <div class="highlight-comparison-pane">
 
 ```rust
-use these_macros_should_be_illegal::enum_fn;
-
 #[enum_fn(description: String)]
 enum Message {
     Pair(String, String) = |left, right| format!("{left}: {right}"),
@@ -197,8 +195,6 @@ a `const fn`:
 <div class="highlight-comparison-pane">
 
 ```rust
-use these_macros_should_be_illegal::enum_fn;
-
 #[enum_fn(description: &'static str)]
 enum Status {
     Ready = "ready",
@@ -252,8 +248,6 @@ instead:
 <div class="highlight-comparison-pane">
 
 ```rust
-use these_macros_should_be_illegal::enum_fn;
-
 #[enum_fn(description: &'static str = stringify)]
 enum Status {
     Ready = "ready",
@@ -289,6 +283,56 @@ assert_eq!(Status::Unknown.description(), "Unknown");
 
 </div>
 
+Use `= panic` when reaching an undescribed variant is a bug. The method keeps
+the declared return type, and the missing arms panic with the variant's name:
+
+<div class="highlight-comparison-key">
+  <strong>You write</strong>
+  <strong>Roughly expands to</strong>
+</div>
+
+<div class="highlight-comparison">
+
+<div class="highlight-comparison-pane">
+
+```rust
+#[enum_fn(description: &'static str = panic)]
+enum Status {
+    Ready = "ready",
+    Unknown,
+}
+
+assert_eq!(Status::Ready.description(), "ready");
+Status::Unknown.description();
+```
+
+</div>
+
+<div class="highlight-comparison-pane">
+
+```rust,mdbook-runnable,should_panic
+enum Status {
+    Ready,
+    Unknown,
+}
+
+impl Status {
+    const fn description(&self) -> &'static str {
+        match self {
+            Self::Ready => "ready",
+            Self::Unknown => panic!("variant `Unknown` has no generated value"),
+        }
+    }
+}
+
+assert_eq!(Status::Ready.description(), "ready");
+Status::Unknown.description();
+```
+
+</div>
+
+</div>
+
 # Generic enums and ordinary Rust structure
 
 The original enum declaration remains an ordinary `syn::ItemEnum`. Attributes,
@@ -297,8 +341,6 @@ retained. Conditional attributes are copied to the corresponding generated
 match arms so the enum and method stay exhaustive under the same configuration.
 
 ```rust
-use these_macros_should_be_illegal::enum_fn;
-
 #[enum_fn(size: usize)]
 pub(crate) enum Value<'a, T: AsRef<str>, const N: usize>
 where
@@ -341,8 +383,6 @@ inferred independently from the declared return type:
 <div class="highlight-comparison-pane">
 
 ```rust
-use these_macros_should_be_illegal::enum_fn;
-
 #[enum_fn(description: String)]
 enum Error {
     Message(String) = |message| (*message).clone(),

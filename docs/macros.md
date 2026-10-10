@@ -25,10 +25,10 @@ These macros parse a known local shape and generate ordinary Rust:
 These conveniences accept one ordinary Rust fragment or name:
 
 - [`qf!`](qf.md) recursively qualifies common paths in one Rust type;
-- the [name stringifiers](stringification.md#name-cases) convert one identifier
-  or string literal to a selected conventional case;
-- [`stringify_type!`](stringification.md#rust-types) parses one Rust type and
-  emits its compact, structure-preserving string name.
+- [`stringify_as!`](stringification.md) converts one identifier or string
+  literal to a selected [conventional case](stringification.md#name-cases), or
+  emits the compact, structure-preserving string name of
+  [one Rust type](stringification.md#rust-types).
 
 ## Recursive whole-stream extensions
 

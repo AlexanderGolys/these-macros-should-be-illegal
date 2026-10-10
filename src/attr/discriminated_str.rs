@@ -3,30 +3,13 @@
 use std::collections::HashMap;
 
 use proc_macro2::{Span, TokenStream};
+
+use crate::helpers::arguments::MethodName;
+use crate::helpers::ungroup;
 use quote::quote;
 use syn::{
-    Attribute, Error, Expr, ExprLit, Fields, Ident, ItemEnum, Lit, LitStr, Result, Variant,
-    ext::IdentExt,
-    parse::{Parse, ParseStream},
-    parse2,
+    Attribute, Error, Expr, ExprLit, Fields, Ident, ItemEnum, Lit, LitStr, Result, Variant, parse2,
 };
-
-/// Name of the generated string accessor.
-struct Arguments {
-    /// Method mapping an enum value to its variant's string.
-    method: Ident,
-}
-
-impl Parse for Arguments {
-    /// Parses exactly one accessor identifier.
-    fn parse(input: ParseStream) -> Result<Self> {
-        let method = Ident::parse_any(input)?;
-        if !input.is_empty() {
-            return Err(input.error("unexpected tokens after the discriminant accessor name"));
-        }
-        Ok(Self { method })
-    }
-}
 
 /// Unique string and constructor shape belonging to one enum variant.
 struct Discriminant {
@@ -40,19 +23,44 @@ struct Discriminant {
     fields: Fields,
 }
 
+macro_docs! {
+    /// Assigns every enum variant one unique string literal.
+    ///
+    /// The named method maps a value to its literal, and a same-name macro maps a
+    /// literal and payload back to the variant constructor.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use these_macros_should_be_illegal::discriminated_str;
+    ///
+    /// #[discriminated_str(name)]
+    /// enum Token {
+    ///     Ident(String) = "ident",
+    ///     End = "end",
+    /// }
+    ///
+    /// fn main() {
+    ///     let token = Token!("ident", String::from("value"));
+    ///     assert_eq!(token.name(), "ident");
+    ///     assert!(matches!(Token!("end"), Token::End));
+    /// }
+    /// ```
+}
+
 /// Generates unique string discriminants and a same-name constructor macro.
-pub(crate) fn discriminated_str(arguments: TokenStream, item: TokenStream) -> TokenStream {
-    let result = parse2::<Arguments>(arguments)
+pub fn discriminated_str(arguments: TokenStream, item: TokenStream) -> TokenStream {
+    let result = parse2::<MethodName>(arguments)
         .and_then(|arguments| parse2::<ItemEnum>(item).map(|item| (arguments, item)))
         .and_then(|(arguments, item)| expand(arguments, item));
     result.unwrap_or_else(Error::into_compile_error)
 }
 
 /// Removes string discriminants and emits their two useful directions.
-fn expand(arguments: Arguments, mut item: ItemEnum) -> Result<TokenStream> {
+fn expand(MethodName(method): MethodName, mut item: ItemEnum) -> Result<TokenStream> {
     let discriminants = take_discriminants(&mut item)?;
     let enum_ident = &item.ident;
-    let method = &arguments.method;
+    let method = &method;
     let (impl_generics, type_generics, where_clause) = item.generics.split_for_impl();
     let forward_arms = discriminants.iter().map(|discriminant| {
         let attrs = &discriminant.attrs;
@@ -188,18 +196,31 @@ fn take_discriminant(variant: &mut Variant) -> Result<Discriminant> {
     };
     let Expr::Lit(ExprLit {
         lit: Lit::Str(value),
-        ..
-    }) = expression
+        attrs,
+    }) = ungroup::expr(&expression)
     else {
+        let found = if matches!(ungroup::expr(&expression), Expr::Macro(_)) {
+            ", found a macro call; discriminants are read before macros in them expand"
+        } else {
+            ""
+        };
         return Err(Error::new_spanned(
             expression,
-            "expected a string literal discriminant",
+            format!("expected a string literal discriminant{found}"),
         ));
     };
 
+    // Only the string is read, so attributes on it would silently have no effect.
+    if let Some(attribute) = attrs.first() {
+        return Err(Error::new_spanned(
+            attribute,
+            "attributes on a string discriminant have no effect; put them on the variant",
+        ));
+    }
+
     Ok(Discriminant {
         variant: variant.ident.clone(),
-        value,
+        value: value.clone(),
         attrs: conditional_attrs(&variant.attrs).cloned().collect(),
         fields: variant.fields.clone(),
     })
@@ -261,5 +282,14 @@ mod tests {
         .to_string();
 
         assert!(output.contains("every variant requires a string literal discriminant"));
+    }
+
+    /// Attributes on the literal itself are rejected rather than silently dropped.
+    #[test]
+    fn rejects_attributes_on_the_discriminant() {
+        let output = discriminated_str(quote!(name), quote!(enum E { A = #[cfg(any())] "a" }))
+            .to_string();
+
+        assert!(output.contains("put them on the variant"), "{output}");
     }
 }

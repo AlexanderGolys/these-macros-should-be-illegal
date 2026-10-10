@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.9.0 - 2026-10-10
+
+### Changed
+
+- The `stringify_*_case!`, `stringify_lowercase!`, `stringify_uppercase!` and
+  `stringify_type!` macros are replaced by one `stringify_as!`, whose leading
+  option selects the spelling: `stringify_as!(snake; SomeName)`,
+  `stringify_as!(type; Vec<T>)`.
+- Attribute arguments accept a trailing comma uniformly, as in
+  `#[callable(apply,)]`, `#[discriminated_str(name,)]` and `#[enum_fn(m: u8,)]`.
+- `#[discriminated_str]` rejects attributes written on a discriminant literal,
+  which previously had no effect; put them on the variant instead.
+- `#[overload_op]` rejects negative and `default` impls, whose modifiers were
+  previously ignored.
+- Built on `syn` 3.
+
+### Fixed
+
+- Values forwarded by a `macro_rules!` caller as `$value:expr`, `$value:literal`
+  or `$value:ty` are recognized like values written directly: string
+  discriminants of `#[discriminated_str]`, field selectors and closures of
+  `#[enum_fn]`, operand types of `#[overload_op]`, and `stringify_as!(type; ...)`,
+  which previously spelled such a type as `$none(...)`.
+- Clearer errors for unknown, repeated or list-form `exclude_macros` options,
+  and for macro calls where a name or literal is required, since those
+  arguments are read before any macro inside them expands.
+
 ## 0.8.0 - 2026-10-08
 
 ### Added

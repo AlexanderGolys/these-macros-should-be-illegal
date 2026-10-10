@@ -1,5 +1,7 @@
 # Operators that follow from the ones a type has
 
+API reference on docs.rs: [`complete_ops`](https://docs.rs/these-macros-should-be-illegal/latest/these_macros_should_be_illegal/attr.complete_ops.html).
+
 Subtraction is not new information. If `x + v` makes sense, and `v` lies in an
 abelian group, then `x - v` makes sense too: `-v` lies in that same group, so
 `x + (-v)` is an addition the type already has. `complete_ops` writes that down,
@@ -7,8 +9,6 @@ and claims nothing else.
 
 ```rust
 use std::ops::{Add, Neg};
-use these_macros_should_be_illegal::{complete_ops, overload_op};
-
 #[derive(Debug, PartialEq)]
 #[complete_ops(Sub)]
 struct Vector(f64);
@@ -57,6 +57,50 @@ where
 }
 ```
 
+The completion is plain Rust, so it can be tried out directly. Edit the block
+below and run it, for example subtracting `&Vector(2.0)` to see a borrowed
+operand rejected:
+
+```rust,editable,mdbook-runnable
+use std::ops::{Add, Neg, Sub};
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Vector(f64);
+
+impl Add for Vector {
+    type Output = Vector;
+
+    fn add(self, rhs: Vector) -> Vector {
+        Vector(self.0 + rhs.0)
+    }
+}
+
+impl Neg for Vector {
+    type Output = Vector;
+
+    fn neg(self) -> Vector {
+        Vector(-self.0)
+    }
+}
+
+// The impl `#[complete_ops(Sub)]` adds.
+impl<Rhs> Sub<Rhs> for Vector
+where
+    Rhs: Neg<Output = Rhs>,
+    Vector: Add<Rhs>,
+{
+    type Output = <Vector as Add<Rhs>>::Output;
+
+    fn sub(self, rhs: Rhs) -> Self::Output {
+        self + -rhs
+    }
+}
+
+fn main() {
+    println!("{:?}", Vector(5.0) - Vector(2.0));
+}
+```
+
 `Neg<Output = Rhs>` is what makes the operand a group element rather than merely
 something negatable: an inverse stays in the group it came from. One impl
 therefore covers every group the type can add, rather than one impl per operand
@@ -69,8 +113,6 @@ on by a group completes exactly as a group acting on itself does:
 
 ```rust
 use std::ops::{Add, Neg};
-use these_macros_should_be_illegal::{complete_ops, overload_op};
-
 #[derive(Debug, PartialEq)]
 struct Vector(f64);
 
@@ -124,8 +166,6 @@ the completion:
 
 ```rust
 use std::ops::{Add, Neg, Sub};
-use these_macros_should_be_illegal::{complete_ops, overload_op};
-
 #[derive(Debug, PartialEq)]
 struct Vector(f64);
 
@@ -174,8 +214,6 @@ subtraction then goes through:
 
 ```rust
 use std::ops::{Add, Mul};
-use these_macros_should_be_illegal::{complete_ops, overload_op};
-
 #[derive(Debug, PartialEq)]
 #[complete_ops(Neg = -1.0f64, Sub)]
 struct Scaled(f64);

@@ -10,9 +10,7 @@
 .env
 .env.*
 !.env.example
-.vercel/
 **.json
-!/vercel.json
 /concurrency.md
 
 # Editors and operating systems
@@ -36,3 +34,6 @@ BUGS.md
 *.log
 .editorconfig
 .gitattributes
+
+# Local scratch crate
+/playground/

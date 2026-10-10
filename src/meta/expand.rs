@@ -5,17 +5,18 @@ use std::{fs, path::PathBuf};
 use proc_macro2::{Delimiter, LexError, Spacing, TokenStream, TokenTree, fallback};
 use quote::quote;
 use syn::{
-    Error, Expr, ExprLit, Ident, ItemMod, Lit, Meta, Path, Token,
+    Error, Expr, ExprLit, ItemMod, Lit, Meta, Path, Token,
     ext::IdentExt,
-    parse::{Parse, ParseStream},
+    parse::{Parse, ParseStream, Parser},
     parse2,
 };
 
 use TokenTree::{Group as GroupTT, Ident as IdentTT, Punct as PunctTT};
 
-use crate::meta::invoke;
+use super::reflect::invoke;
 
-use super::preprocessing::{ExpansionConfig, parse_config_option, split_config_prefix};
+use crate::helpers::preprocessing::{ExpansionConfig, parse_config_option, split_config_prefix};
+use crate::helpers::ungroup;
 
 /// Macro paths and shared options supplied before the module declaration.
 struct Arguments {
@@ -41,20 +42,16 @@ impl Parse for Arguments {
         let mut config = ExpansionConfig::default();
         let mut has_excluded_macros = false;
 
-        while !input.is_empty() {
-            let fork = input.fork();
-            let is_option = Ident::parse_any(&fork).is_ok() && fork.peek(Token![=]);
-
-            if is_option {
-                parse_config_option(input, &mut config, &mut has_excluded_macros)?;
+        // A bare path names a macro; a path followed by a value is an option.
+        syn::meta::parser(|entry| {
+            if entry.input.is_empty() || entry.input.peek(Token![,]) {
+                macros.push(entry.path);
+                Ok(())
             } else {
-                macros.push(input.parse()?);
+                parse_config_option(entry, &mut config, &mut has_excluded_macros)
             }
-
-            if !input.is_empty() {
-                input.parse::<Token![,]>()?;
-            }
-        }
+        })
+        .parse2(input.parse()?)?;
 
         if macros.is_empty() {
             return Err(input.error("expected at least one function-like macro"));
@@ -89,8 +86,34 @@ impl Parse for Invocation {
     }
 }
 
+macro_docs! {
+    /// Loads an out-of-line module and injects function-like macros around its body.
+    ///
+    /// The module file is found as for an ordinary `mod` declaration, or through a
+    /// `#[path]` attribute, and may contain syntax that only the injected macros
+    /// accept. Here it uses `@@"..."` owned string literals:
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use these_macros_should_be_illegal::expand;
+    ///
+    /// // The macro runs inside the generated module, so name it by full path.
+    /// expand!(
+    ///     these_macros_should_be_illegal::literally_literal_string;
+    ///     #[path = "../tests/fixtures/literally_literal_string_module.rs"]
+    ///     mod experiments;
+    /// );
+    ///
+    /// fn main() {
+    ///     let owned: String = experiments::owned_string();
+    ///     assert_eq!(owned, "loaded outside Rust");
+    /// }
+    /// ```
+}
+
 /// Loads an out-of-line module and injects the requested function-like macros.
-pub(crate) fn expand(input: TokenStream) -> TokenStream {
+pub fn expand(input: TokenStream) -> TokenStream {
     let invocation_file = input
         .clone()
         .into_iter()
@@ -299,7 +322,7 @@ fn explicit_module_path(module: &ItemMod) -> syn::Result<Option<PathBuf>> {
     let Expr::Lit(ExprLit {
         lit: Lit::Str(path),
         ..
-    }) = &meta.value
+    }) = ungroup::expr(&meta.value)
     else {
         return Err(Error::new_spanned(
             &meta.value,

@@ -1,5 +1,7 @@
 # `forward_attributes`
 
+API reference on docs.rs: [`forward_attributes`](https://docs.rs/these-macros-should-be-illegal/latest/these_macros_should_be_illegal/attr.forward_attributes.html).
+
 `forward_attributes` turns ordinary outer attributes into an argument envelope
 for any item-position function-like macro. The receiving macro decides what the
 attributes mean.
@@ -14,8 +16,6 @@ attributes mean.
 <div class="highlight-comparison-pane">
 
 ```rust
-use these_macros_should_be_illegal::{forward_attributes, strutuct};
-
 #[forward_attributes]
 #[derive(Debug, PartialEq)]
 strutuct! {
@@ -81,8 +81,6 @@ written before it may expand or fail before forwarding gets a turn:
 <div class="highlight-comparison-pane">
 
 ```rust,compile_fail
-use these_macros_should_be_illegal::{forward_attributes, strutuct};
-
 #[derive(Debug)]
 #[forward_attributes]
 strutuct! { TooLate { A, B } }

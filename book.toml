@@ -27,3 +27,12 @@ additional-css = [
     "book/theme/treesitter.css",
     "book/theme/everforest.css",
 ]
+
+[rust]
+edition = "2024"
+
+# The playground cannot load this crate, so blocks using its macros cannot run
+# there. Only plain-Rust blocks opt in, with the `mdbook-runnable` annotation.
+[output.html.playground]
+runnable = false
+editable = true

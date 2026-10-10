@@ -1,5 +1,7 @@
 # These Macros Should Be Illegal
 
+The API reference with tested examples is on [docs.rs](https://docs.rs/these-macros-should-be-illegal/latest/these_macros_should_be_illegal/).
+
 This crate is a small collection of experimental Rust macros for deleting
 boilerplate and trying syntax that ordinary Rust—quite reasonably—does not
 accept. The useful bits come first; the cursed implementation details are here
@@ -13,8 +15,7 @@ Import only the macros used at each call site. For example:
 
 ```rust
 use these_macros_should_be_illegal::{
-    callable, enum_fn, make_fn, perm, qf, reflect, stringify_snake_case,
-    strutuct,
+    callable, enum_fn, make_fn, perm, qf, reflect, stringify_as, strutuct,
 };
 ```
 

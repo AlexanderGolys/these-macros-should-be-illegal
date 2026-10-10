@@ -8,8 +8,23 @@ use syn::{Error, LitStr, parse2};
 use crate::helpers::preprocessing::ExpansionConfig;
 use crate::helpers::preprocessing::{is_joint_punctuation, is_punctuation, split_config_prefix};
 
+macro_docs! {
+    /// Rewrites literal strings in exactly the supplied token stream.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use these_macros_should_be_illegal::literally_literal_string;
+    /// literally_literal_string! {
+    ///     let literal_string: String = @@"hello";
+    ///     let usual_string: String = "hello".to_string();
+    ///     assert_eq!(literal_string, usual_string);
+    /// }
+    /// ```
+}
+
 /// Rewrites extended literal-string syntax in a procedural macro's input.
-pub(crate) fn literally_literal_string(input: TokenStream) -> TokenStream {
+pub fn literally_literal_string(input: TokenStream) -> TokenStream {
     expand(input).unwrap_or_else(Error::into_compile_error)
 }
 

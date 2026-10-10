@@ -1,84 +1,58 @@
 //! Stable function-like syntax for objects exposing one selected trait method.
 
-use proc_macro2::{Span, TokenStream};
+use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
-    Attribute, Block, Error, Expr, FnArg, GenericParam, Ident, ItemTrait, Token, TraitItem,
-    TraitItemFn,
-    ext::IdentExt,
-    parse::{Parse, ParseStream},
-    parse_quote, parse2,
-    spanned::Spanned,
+    Attribute, Block, Error, FnArg, GenericParam, Ident, ItemTrait, Safety, TraitItem, TraitItemFn,
+    parse_quote, parse2, spanned::Spanned,
 };
 
+use crate::helpers::arguments::MethodName;
+
 /// Method name reserved as the structural calling convention.
-const CALL_METHOD: &str = "__priv_tmsbi_call";
+pub(crate) const CALL_METHOD: &str = "__priv_tmsbi_call";
 
-/// The selected method named by `#[callable(...)]`.
-struct CallableArguments {
-    /// Trait method whose signature and behavior are aliased.
-    method: Ident,
-}
-
-impl Parse for CallableArguments {
-    /// Parses exactly one method identifier.
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let method = Ident::parse_any(input)?;
-        if !input.is_empty() {
-            return Err(input.error("expected exactly one callable method name"));
-        }
-        Ok(Self { method })
-    }
-}
-
-/// One local binding and the macro that invokes it.
-struct FunctionBinding {
-    /// Whether the generated binding may be mutably borrowed by its call method.
-    mutability: Option<Token![mut]>,
-    /// Shared name of the value and macro.
-    name: Ident,
-    /// Expression stored in the local binding.
-    value: Expr,
-}
-
-impl Parse for FunctionBinding {
-    /// Parses `[mut] name = expression`.
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let mutability = input.parse()?;
-        let name = Ident::parse_any(input)?;
-        input.parse::<Token![=]>()?;
-        let value = input.parse()?;
-        input.parse::<Option<Token![;]>>()?;
-        if !input.is_empty() {
-            return Err(input.error("unexpected tokens after the callable value"));
-        }
-        Ok(Self {
-            mutability,
-            name,
-            value,
-        })
-    }
+macro_docs! {
+    /// Gives one trait method a structural alias that [`make_fn!`](make_fn) calls through.
+    ///
+    /// No shared callable trait is imposed: the attribute only marks which method of
+    /// a user-owned trait the generated same-name macro forwards its arguments to.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use these_macros_should_be_illegal::{callable, make_fn};
+    ///
+    /// #[callable(apply)]
+    /// trait Action {
+    ///     fn apply(&self, point: usize) -> usize;
+    /// }
+    ///
+    /// struct Shift(usize);
+    ///
+    /// impl Action for Shift {
+    ///     fn apply(&self, point: usize) -> usize {
+    ///         point + self.0
+    ///     }
+    /// }
+    ///
+    /// make_fn!(sigma = Shift(3));
+    /// assert_eq!(sigma!(2), 5);
+    /// ```
 }
 
 /// Adds a hidden structural-call alias to one method of a trait.
-pub(crate) fn callable(arguments: TokenStream, item: TokenStream) -> TokenStream {
-    let result = parse2::<CallableArguments>(arguments)
+pub fn callable(arguments: TokenStream, item: TokenStream) -> TokenStream {
+    let result = parse2::<MethodName>(arguments)
         .and_then(|arguments| parse2::<ItemTrait>(item).map(|item| (arguments, item)))
         .and_then(|(arguments, item)| expand_callable(arguments, item));
 
     result.unwrap_or_else(Error::into_compile_error)
 }
 
-/// Creates a local value and a same-name macro forwarding to its call alias.
-pub(crate) fn make_fn(input: TokenStream) -> TokenStream {
-    parse2::<FunctionBinding>(input)
-        .map(expand_function_binding)
-        .unwrap_or_else(Error::into_compile_error)
-}
-
 /// Appends the selected method's hidden forwarding alias to the trait.
-fn expand_callable(arguments: CallableArguments, mut item: ItemTrait) -> syn::Result<TokenStream> {
-    let call_name = Ident::new(CALL_METHOD, arguments.method.span());
+fn expand_callable(MethodName(method_name): MethodName, mut item: ItemTrait) -> syn::Result<TokenStream> {
+    let call_name = Ident::new(CALL_METHOD, method_name.span());
     if let Some(span) = item.items.iter().find_map(|item| match item {
         TraitItem::Const(constant) if constant.ident == call_name => Some(constant.ident.span()),
         TraitItem::Fn(method) if method.sig.ident == call_name => Some(method.sig.ident.span()),
@@ -94,15 +68,15 @@ fn expand_callable(arguments: CallableArguments, mut item: ItemTrait) -> syn::Re
         .items
         .iter()
         .find_map(|item| match item {
-            TraitItem::Fn(method) if method.sig.ident == arguments.method => Some(method.clone()),
+            TraitItem::Fn(method) if method.sig.ident == method_name => Some(method.clone()),
             _ => None,
         })
         .ok_or_else(|| {
             Error::new(
-                arguments.method.span(),
+                method_name.span(),
                 format!(
                     "trait `{}` has no method named `{}`",
-                    item.ident, arguments.method
+                    item.ident, method_name
                 ),
             )
         })?;
@@ -177,7 +151,7 @@ fn callable_alias(
             self #(, #arguments)*
         )
     );
-    let invocation = if selected.sig.unsafety.is_some() {
+    let invocation = if matches!(selected.sig.safety, Safety::Unsafe(_)) {
         quote!(unsafe { #invocation })
     } else {
         invocation
@@ -202,31 +176,12 @@ fn forwarding_attributes(attributes: &[Attribute]) -> Vec<Attribute> {
         .collect()
 }
 
-/// Emits the local binding followed by its function-like forwarding macro.
-fn expand_function_binding(binding: FunctionBinding) -> TokenStream {
-    let FunctionBinding {
-        mutability,
-        name,
-        value,
-    } = binding;
-    let call_name = Ident::new(CALL_METHOD, Span::call_site());
-
-    quote! {
-        let #mutability #name = #value;
-        macro_rules! #name {
-            ($($arguments:tt)*) => {
-                #name.#call_name($($arguments)*)
-            };
-        }
-    }
-}
-
 /// Signature preservation, forwarding, and diagnostics.
 #[cfg(test)]
 mod tests {
     use quote::quote;
 
-    use super::{callable, make_fn};
+    use super::callable;
 
     /// The alias retains trait and method generics while normalizing patterns.
     #[test]
@@ -279,15 +234,5 @@ mod tests {
         .to_string();
 
         assert!(output.contains("is reserved by `callable`"));
-    }
-
-    /// The binding macro emits exactly one deferred argument repetition.
-    #[test]
-    fn creates_a_same_name_macro() {
-        let output = make_fn(quote!(mut sigma = build())).to_string();
-
-        assert!(output.contains("let mut sigma = build ()"));
-        assert!(output.contains("macro_rules ! sigma"));
-        assert!(output.contains("sigma . __priv_tmsbi_call"));
     }
 }

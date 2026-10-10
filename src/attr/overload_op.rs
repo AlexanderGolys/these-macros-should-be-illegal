@@ -1,11 +1,14 @@
 //! Ownership and assignment overloads of an operator implemented for references.
 
+use crate::helpers::arguments::NoArguments;
 use crate::helpers::fresh_name::{fresh_name, written_identifiers};
+use crate::helpers::ungroup;
 use proc_macro2::{TokenStream, TokenTree};
 use quote::{format_ident, quote};
 use syn::{
-    Attribute, BoundLifetimes, Error, FnArg, GenericArgument, GenericParam, Generics, Ident,
-    ImplItem, ImplItemFn, ItemImpl, Lifetime, Path, PathArguments, Token, Type, TypeParamBound,
+    Attribute, BoundLifetimes, Error, GenericArgument, GenericParam, Generics, Ident,
+    ImplItem, ImplItemFn, ItemImpl, Lifetime, Path, PathArguments, ReceiverKind, Token, Type,
+    TypeParamBound,
     WherePredicate, parse_quote, parse2, punctuated::Punctuated,
 };
 
@@ -46,25 +49,44 @@ struct ReferenceOperator {
     associated_items: Vec<ImplItem>,
 }
 
+macro_docs! {
+    /// Repeats an operator implemented for references across its owned forms.
+    ///
+    /// From `impl Op<&Rhs> for &Lhs` it generates `Op<&Rhs>` and `Op<Rhs>` for `Lhs`,
+    /// and, when the result is `Lhs` itself, both `OpAssign` impls. Every generated
+    /// impl delegates to the attributed one; nothing is cloned.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::ops::Add;
+    /// use these_macros_should_be_illegal::overload_op;
+    ///
+    /// #[derive(Debug, PartialEq)]
+    /// struct Vector(f64, f64);
+    ///
+    /// #[overload_op]
+    /// impl Add<&Vector> for &Vector {
+    ///     type Output = Vector;
+    ///
+    ///     fn add(self, rhs: &Vector) -> Vector {
+    ///         Vector(self.0 + rhs.0, self.1 + rhs.1)
+    ///     }
+    /// }
+    ///
+    /// let mut total = Vector(1.0, 2.0) + Vector(3.0, 4.0);
+    /// total += &Vector(1.0, 1.0);
+    /// assert_eq!(total, Vector(5.0, 7.0));
+    /// ```
+}
+
 /// Repeats an operator implemented for references across its owned operand forms.
-pub(crate) fn overload_op(arguments: TokenStream, item: TokenStream) -> TokenStream {
-    let result = reject_arguments(arguments)
-        .and_then(|()| parse2::<ItemImpl>(item))
+pub fn overload_op(arguments: TokenStream, item: TokenStream) -> TokenStream {
+    let result = parse2::<NoArguments>(arguments)
+        .and_then(|NoArguments| parse2::<ItemImpl>(item))
         .and_then(|item| expand_overloads(&item));
 
     result.unwrap_or_else(Error::into_compile_error)
-}
-
-/// Rejects arguments, because the attributed impl already says everything.
-fn reject_arguments(arguments: TokenStream) -> syn::Result<()> {
-    if arguments.is_empty() {
-        Ok(())
-    } else {
-        Err(Error::new_spanned(
-            arguments,
-            "`overload_op` reads the operator from the impl and takes no arguments",
-        ))
-    }
 }
 
 /// Emits the attributed impl unchanged, followed by every overload it implies.
@@ -80,7 +102,9 @@ fn expand_overloads(item: &ItemImpl) -> syn::Result<TokenStream> {
 impl ReferenceOperator {
     /// Decomposes one operator impl whose operands are written as references.
     fn from_impl(item: &ItemImpl) -> syn::Result<Self> {
-        let (_, trait_path, _) = item.trait_.as_ref().ok_or_else(|| {
+        // `default impl` and negative impls are not operator implementations to repeat.
+        item.modifiers.require_empty()?;
+        let (trait_path, _) = item.trait_.as_ref().ok_or_else(|| {
             Error::new_spanned(
                 &item.self_ty,
                 "an operator overload is generated from a trait impl",
@@ -357,8 +381,8 @@ fn split_operator_method(item: &ItemImpl) -> syn::Result<(ImplItemFn, Vec<ImplIt
             "expected exactly one operator method in the impl",
         ));
     }
-    if !matches!(method.sig.inputs.first(), Some(FnArg::Receiver(receiver))
-        if receiver.reference.is_none())
+    if !matches!(method.sig.receiver(), Some(receiver)
+        if matches!(receiver.kind, ReceiverKind::Value))
     {
         return Err(Error::new_spanned(
             &method.sig,
@@ -411,7 +435,7 @@ fn right_operand(
 /// A mutable borrow is not one of them: the generated bodies borrow their owned operands
 /// with `&`, which an impl for `&mut T` does not accept.
 fn shared_referent(operand: &Type) -> Option<Type> {
-    match operand {
+    match ungroup::ty(operand) {
         Type::Reference(borrowed) if borrowed.mutability.is_none() => {
             Some((*borrowed.elem).clone())
         }
@@ -591,7 +615,7 @@ fn same_written_type(left: &Type, right: &Type) -> bool {
         return true;
     }
 
-    match (left, right) {
+    match (ungroup::ty(left), ungroup::ty(right)) {
         (Type::Path(left), Type::Path(right)) if left.qself.is_none() && right.qself.is_none() => {
             shares_path_suffix(&left.path, &right.path)
         }
@@ -914,8 +938,16 @@ mod tests {
     /// Rejects arguments, since the impl already says everything.
     #[test]
     fn rejects_arguments() {
-        let error = reject_arguments(quote!(bin = Add)).unwrap_err().to_string();
+        let error = overload_op(quote!(bin = Add), quote!()).to_string();
 
         assert!(error.contains("takes no arguments"), "{error}");
+    }
+
+    /// Negative and `default` impls carry modifiers an overload cannot repeat.
+    #[test]
+    fn rejects_impl_modifiers() {
+        let error = overload_op(quote!(), quote!(impl !Add<&V> for &V {})).to_string();
+
+        assert!(error.contains("compile_error"), "{error}");
     }
 }

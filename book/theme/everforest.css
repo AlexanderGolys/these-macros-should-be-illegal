@@ -104,7 +104,7 @@
 
 /* Rust's generic override treats macros like keywords. Everforest assigns
    function-like macros to the same green used for calls and constructors. */
-.everforest code.language-rust .ts-function-macro {
+.everforest code[data-language="rust"] .ts-function-macro {
   color: var(--ts-function);
 }
 
@@ -112,7 +112,7 @@
   color: var(--ts-operator);
 }
 
-.everforest code.language-rust .ts-label {
+.everforest code[data-language="rust"] .ts-label {
   color: var(--ts-orange);
 }
 

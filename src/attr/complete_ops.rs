@@ -18,6 +18,57 @@ const RIGHT_OPERAND_PARAMETER: &str = "Rhs";
 /// Lifetime of the borrowed left operand a completed operator introduces.
 const OPERAND_LIFETIME: &str = "operand";
 
+macro_docs! {
+    /// Adds the operators that follow from the ones a type already implements.
+    ///
+    /// `Sub` completes subtraction from addition and negation; `Neg = <scalar>`
+    /// completes negation from multiplication by that scalar.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::ops::{Add, AddAssign, Neg};
+    /// use these_macros_should_be_illegal::complete_ops;
+    ///
+    /// #[derive(Debug, PartialEq)]
+    /// #[complete_ops(Sub)]
+    /// struct Vector(f64);
+    ///
+    /// impl Add for Vector {
+    ///     type Output = Vector;
+    ///
+    ///     fn add(self, rhs: Vector) -> Vector {
+    ///         Vector(self.0 + rhs.0)
+    ///     }
+    /// }
+    ///
+    /// impl AddAssign for Vector {
+    ///     fn add_assign(&mut self, rhs: Vector) {
+    ///         self.0 += rhs.0;
+    ///     }
+    /// }
+    ///
+    /// impl Neg for Vector {
+    ///     type Output = Vector;
+    ///
+    ///     fn neg(self) -> Vector {
+    ///         Vector(-self.0)
+    ///     }
+    /// }
+    ///
+    /// assert_eq!(Vector(5.0) - Vector(2.0), Vector(3.0));
+    /// ```
+}
+
+/// Adds the operators that follow from the ones a type already implements.
+pub fn complete_ops(arguments: TokenStream, item: TokenStream) -> TokenStream {
+    let result = parse2::<SelectedCompletions>(arguments)
+        .and_then(|selected| parse2::<Item>(item).map(|item| (selected, item)))
+        .and_then(|(selected, item)| expand_completions(&selected, &item));
+
+    result.unwrap_or_else(Error::into_compile_error)
+}
+
 /// One operator to complete, with whatever the completion needs to be stated.
 enum Completion {
     /// `x - v` is `x + (-v)`, for every negatable `v` the type can add.
@@ -111,14 +162,7 @@ impl Parse for SelectedCompletions {
     }
 }
 
-/// Adds the operators that follow from the ones a type already implements.
-pub(crate) fn complete_ops(arguments: TokenStream, item: TokenStream) -> TokenStream {
-    let result = parse2::<SelectedCompletions>(arguments)
-        .and_then(|selected| parse2::<Item>(item).map(|item| (selected, item)))
-        .and_then(|(selected, item)| expand_completions(&selected, &item));
 
-    result.unwrap_or_else(Error::into_compile_error)
-}
 
 /// Emits the attributed item unchanged, followed by the operators it implies.
 fn expand_completions(selected: &SelectedCompletions, item: &Item) -> syn::Result<TokenStream> {

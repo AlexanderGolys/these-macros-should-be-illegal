@@ -1,5 +1,7 @@
 # Ownership overloads of one operator
 
+API reference on docs.rs: [`overload_op`](https://docs.rs/these-macros-should-be-illegal/latest/these_macros_should_be_illegal/attr.overload_op.html).
+
 Rust resolves `a + b`, `a + &b`, and `a += b` through separate traits and
 separate impls, so one operator written once is not usable at the call sites
 that ordinary code actually contains. `overload_op` goes on the impl written for
@@ -11,8 +13,6 @@ emitted unchanged.
 
 ```rust
 use std::ops::Add;
-use these_macros_should_be_illegal::overload_op;
-
 #[derive(Debug, PartialEq)]
 struct Vector(f64, f64);
 
@@ -45,8 +45,6 @@ rejected rather than supported:
 
 ```rust,compile_fail
 use std::ops::Add;
-use these_macros_should_be_illegal::overload_op;
-
 struct Vector(f64);
 
 // error: the operator must be implemented for a reference, as `impl Add<&T> for &T`
@@ -76,6 +74,56 @@ From a binary operator, four impls follow:
 | `TraitAssign<&Rhs> for Lhs` | mutated | borrowed |
 | `TraitAssign<Rhs> for Lhs` | mutated | owned |
 
+Spelled out for an addition, the generated impls are the following. Run it, or
+reveal the hidden lines to see the hand-written impl they all delegate to:
+
+```rust,mdbook-runnable
+# use std::ops::{Add, AddAssign};
+#
+# #[derive(Debug, PartialEq)]
+# struct Vector(f64);
+#
+# impl Add<&Vector> for &Vector {
+#     type Output = Vector;
+#
+#     fn add(self, rhs: &Vector) -> Vector {
+#         Vector(self.0 + rhs.0)
+#     }
+# }
+#
+impl Add<&Vector> for Vector {
+    type Output = Vector;
+
+    fn add(self, rhs: &Vector) -> Vector {
+        &self + rhs
+    }
+}
+
+impl Add<Vector> for Vector {
+    type Output = Vector;
+
+    fn add(self, rhs: Vector) -> Vector {
+        &self + &rhs
+    }
+}
+
+impl AddAssign<&Vector> for Vector {
+    fn add_assign(&mut self, rhs: &Vector) {
+        *self = &*self + rhs;
+    }
+}
+
+impl AddAssign<Vector> for Vector {
+    fn add_assign(&mut self, rhs: Vector) {
+        *self = &*self + &rhs;
+    }
+}
+
+let mut total = Vector(1.0) + Vector(2.0);
+total += &Vector(3.0);
+println!("{total:?}");
+```
+
 `Trait<Rhs> for &Lhs` is deliberately absent: `&a + b` mixes a borrowed left
 operand with an owned right one, which is not a spelling ordinary code uses.
 
@@ -83,8 +131,6 @@ A unary operator generates the single owned form:
 
 ```rust
 use std::ops::Neg;
-use these_macros_should_be_illegal::overload_op;
-
 #[derive(Debug, PartialEq)]
 struct Vector(f64, f64);
 
@@ -107,8 +153,6 @@ defaults to `Self`, which is the borrowed left operand:
 
 ```rust
 use std::ops::Add;
-use these_macros_should_be_illegal::overload_op;
-
 #[derive(Debug, PartialEq)]
 struct Count(u32);
 
@@ -137,8 +181,6 @@ operand, because `a = a op b` is then not even well typed. An operator such as
 
 ```rust
 use std::ops::Sub;
-use these_macros_should_be_illegal::overload_op;
-
 #[derive(Debug, PartialEq)]
 struct Vector(f64);
 
@@ -180,8 +222,6 @@ named by convention, suffixing the trait with `Assign` and the method with
 `_assign`:
 
 ```rust
-use these_macros_should_be_illegal::overload_op;
-
 trait Join<Rhs> {
     type Output;
     fn join(self, rhs: Rhs) -> Self::Output;
@@ -257,8 +297,6 @@ constrained the lifetime being removed, and `for<'a> T: 'a` would demand
 
 ```rust
 use std::ops::Add;
-use these_macros_should_be_illegal::overload_op;
-
 #[derive(Debug, PartialEq)]
 struct Pair<T>(T, T);
 

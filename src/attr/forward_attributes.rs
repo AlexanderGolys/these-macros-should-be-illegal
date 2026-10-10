@@ -4,22 +4,34 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{Error, ItemMacro, parse2};
 
-/// Moves an invocation's remaining outer attributes into its opaque input.
-pub(crate) fn forward_attributes(arguments: TokenStream, item: TokenStream) -> TokenStream {
-    let result = reject_arguments(arguments).and_then(|()| forward(item));
-    result.unwrap_or_else(Error::into_compile_error)
+use crate::helpers::arguments::NoArguments;
+
+macro_docs! {
+    /// Moves the outer attributes of an item-position macro invocation into its input.
+    ///
+    /// The receiving function-like macro then decides what the attributes mean.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use these_macros_should_be_illegal::{forward_attributes, strutuct};
+    ///
+    /// #[forward_attributes]
+    /// #[derive(Debug, PartialEq)]
+    /// strutuct! {
+    ///     State { Ready, Waiting }
+    /// }
+    ///
+    /// fn main() {
+    ///     assert_eq!(format!("{:?}", State::Waiting), "Waiting");
+    /// }
+    /// ```
 }
 
-/// Rejects arguments because the attributed invocation already identifies the target macro.
-fn reject_arguments(arguments: TokenStream) -> syn::Result<()> {
-    if arguments.is_empty() {
-        Ok(())
-    } else {
-        Err(Error::new_spanned(
-            arguments,
-            "`forward_attributes` does not accept arguments",
-        ))
-    }
+/// Moves an invocation's remaining outer attributes into its opaque input.
+pub fn forward_attributes(arguments: TokenStream, item: TokenStream) -> TokenStream {
+    let result = parse2::<NoArguments>(arguments).and_then(|NoArguments| forward(item));
+    result.unwrap_or_else(Error::into_compile_error)
 }
 
 /// Rebuilds one function-like invocation with an attribute/input boundary.

@@ -58,12 +58,29 @@ fn invoke_attributed(invocation: &Invocation, body: TokenStream) -> TokenStream 
 }
 
 /// Constructs one braced function-like macro invocation.
-pub(crate) fn invoke(macro_path: &Path, body: TokenStream) -> TokenStream {
+pub fn invoke(macro_path: &Path, body: TokenStream) -> TokenStream {
     quote!(#macro_path! { #body })
 }
 
+macro_docs! {
+    /// Reflects two macro invocation objects around an opaque token-stream body.
+    ///
+    /// `reflect!(first, second; body)` constructs
+    /// `second! { first! { body } }`. Consequently `second` expands before
+    /// `first`, reversing the expansion order of `first! { second! { body } }`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use these_macros_should_be_illegal::reflect;
+    /// macro_rules! add_one { ($value:expr) => { 1 + $value }; }
+    /// macro_rules! double { ($value:expr) => { 2 * $value }; }
+    /// assert_eq!(reflect!(add_one, double; 3), 8);
+    /// ```
+}
+
 /// Reflects `first!(second!(body))` into `second!(first!(body))`.
-pub(crate) fn reflect(input: TokenStream) -> TokenStream {
+pub fn reflect(input: TokenStream) -> TokenStream {
     parse2::<Reflection>(input)
         .map(|reflection| {
             let inner = invoke_attributed(&reflection.first, reflection.body);

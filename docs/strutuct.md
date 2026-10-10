@@ -1,5 +1,7 @@
 # `strutuct!`
 
+API reference on docs.rs: [`strutuct!`](https://docs.rs/these-macros-should-be-illegal/latest/these_macros_should_be_illegal/macro.strutuct.html), [`emmun!`](https://docs.rs/these-macros-should-be-illegal/latest/these_macros_should_be_illegal/macro.emmun.html).
+
 `strutuct!` keeps small related types where they are used, then hoists them into
 ordinary Rust declarations in dependency order. Generated declarations and
 fields are public by default. `emmun!` is an exact alias with the same syntax.
@@ -57,8 +59,6 @@ Outer attributes can configure the complete generated family through
 <div class="highlight-comparison-pane">
 
 ```rust
-use these_macros_should_be_illegal::{forward_attributes, strutuct};
-
 #[forward_attributes]
 #[derive(Debug, PartialEq)]
 strutuct! {
@@ -100,8 +100,6 @@ fn main() {
 <div class="highlight-comparison-pane">
 
 ```rust
-use these_macros_should_be_illegal::strutuct;
-
 strutuct! {
     Request
     method: Method { Get, Post, Delete },
@@ -160,8 +158,6 @@ A nonempty body produces a named-field struct, a tuple struct, or an enum. The
 body shape selects which one:
 
 ```rust
-use these_macros_should_be_illegal::strutuct;
-
 strutuct! {
     struct Record {
         value: u8,
@@ -195,8 +191,6 @@ They do not force a body to have that shape.
 A root declaration cannot be empty or unit-like:
 
 ```rust,compile_fail
-use these_macros_should_be_illegal::strutuct;
-
 strutuct! {
     Empty {}
 }
@@ -205,8 +199,6 @@ strutuct! {
 A written keyword must agree with the inferred body:
 
 ```rust,compile_fail
-use these_macros_should_be_illegal::strutuct;
-
 strutuct! {
     enum NotAnEnum {
         value: u8,
@@ -215,8 +207,6 @@ strutuct! {
 ```
 
 ```rust,compile_fail
-use these_macros_should_be_illegal::strutuct;
-
 strutuct! {
     struct NotAStruct {
         First,
@@ -232,8 +222,6 @@ field. A field type may itself declare a relative type, an exactly named type,
 or an exactly named unit struct:
 
 ```rust
-use these_macros_should_be_illegal::strutuct;
-
 pub struct Existing;
 
 strutuct! {
@@ -257,8 +245,6 @@ Nested braced bodies use the same inference rules as roots. Consequently a
 field may declare any non-unit shape:
 
 ```rust
-use these_macros_should_be_illegal::strutuct;
-
 pub struct Existing;
 
 strutuct! {
@@ -276,8 +262,6 @@ Struct fields require commas. Once a body is inferred as a struct, an
 enum-shaped member cannot be mixed into it:
 
 ```rust,compile_fail
-use these_macros_should_be_illegal::strutuct;
-
 strutuct! {
     Mixed {
         value: u8,
@@ -290,8 +274,6 @@ A relative name requires a nonempty braced body. Only an exact `|Name|` may
 declare a unit struct:
 
 ```rust,compile_fail
-use these_macros_should_be_illegal::strutuct;
-
 strutuct! {
     Holder {
         marker: Marker {},
@@ -305,8 +287,6 @@ A tuple declaration is one complete parenthesized product containing at least
 two types. The rule is identical at the root and inside another declaration:
 
 ```rust
-use these_macros_should_be_illegal::strutuct;
-
 pub struct Left;
 pub struct Right;
 
@@ -338,8 +318,6 @@ There are no generated zero-field or one-field tuple structs. A single
 parenthesized type is instead the implicit enum-variant form:
 
 ```rust,compile_fail
-use these_macros_should_be_illegal::strutuct;
-
 pub struct Existing;
 
 strutuct! {
@@ -352,8 +330,6 @@ strutuct! {
 An empty product is not a declaration body:
 
 ```rust,compile_fail
-use these_macros_should_be_illegal::strutuct;
-
 strutuct! {
     ZeroFields {
         ()
@@ -365,8 +341,6 @@ The product must be the entire body. Adding another member makes the body an
 enum body, where an implicit parenthesized variant may contain only one type:
 
 ```rust,compile_fail
-use these_macros_should_be_illegal::strutuct;
-
 strutuct! {
     PairAndMore {
         (u8, u16),
@@ -381,8 +355,6 @@ An enum accepts unit variants, tuple-like variants, existing implicit payload
 types, and generated payload declarations:
 
 ```rust
-use these_macros_should_be_illegal::strutuct;
-
 pub struct Existing;
 
 strutuct! {
@@ -431,8 +403,6 @@ Commas between enum variants are optional when the next variant is already
 structurally recognizable:
 
 ```rust
-use these_macros_should_be_illegal::strutuct;
-
 pub struct Existing;
 
 strutuct! {
@@ -452,8 +422,6 @@ ordinary Rust enum.
 An implicit parenthesized variant accepts exactly one type:
 
 ```rust,compile_fail
-use these_macros_should_be_illegal::strutuct;
-
 strutuct! {
     BadImplicit {
         (u8, u16)
@@ -466,8 +434,6 @@ Its type must also have a final path segment from which a variant name can be
 formed. Name a non-path payload explicitly:
 
 ```rust,compile_fail
-use these_macros_should_be_illegal::strutuct;
-
 strutuct! {
     NoInferredName {
         ((u8, u16))
@@ -479,8 +445,6 @@ Parentheses never declare a generated payload type. The former contextual
 spellings are rejected:
 
 ```rust,compile_fail
-use these_macros_should_be_illegal::strutuct;
-
 strutuct! {
     OldSpelling {
         Named(Payload) { First, Second }
@@ -489,8 +453,6 @@ strutuct! {
 ```
 
 ```rust,compile_fail
-use these_macros_should_be_illegal::strutuct;
-
 strutuct! {
     OldImplicit {
         (Payload) { First, Second }
@@ -501,8 +463,6 @@ strutuct! {
 Braced payload declarations must be nonempty:
 
 ```rust,compile_fail
-use these_macros_should_be_illegal::strutuct;
-
 strutuct! {
     EmptyPayload {
         Payload {}
@@ -514,8 +474,6 @@ Rust-style enum discriminants are not part of the `strutuct!` declaration
 grammar:
 
 ```rust,compile_fail
-use these_macros_should_be_illegal::strutuct;
-
 strutuct! {
     Discriminants {
         First = 1,
@@ -530,8 +488,6 @@ An unbarred nested declaration name is relative to its generated parent.
 Nesting continues to concatenate names:
 
 ```rust
-use these_macros_should_be_illegal::strutuct;
-
 strutuct! {
     Root {
         Relative {
@@ -550,8 +506,6 @@ so the other branch declares `Exact` and `ExactLeaf`.
 An exact unit declaration is legal only where a nested type is expected:
 
 ```rust
-use these_macros_should_be_illegal::strutuct;
-
 strutuct! {
     Holder {
         marker: |Marker|,
@@ -564,8 +518,6 @@ strutuct! {
 The root name is already exact and is written without bars:
 
 ```rust,compile_fail
-use these_macros_should_be_illegal::strutuct;
-
 strutuct! {
     |Root|
 }
@@ -575,8 +527,6 @@ An exact name is one identifier, not a path, and generated declarations do not
 accept generic parameter, bound, or `where` clauses:
 
 ```rust,compile_fail
-use these_macros_should_be_illegal::strutuct;
-
 strutuct! {
     Generic<T> {
         value: T,
@@ -591,8 +541,6 @@ declarations. A declaration keyword may be added before an inline declaration
 to validate its inferred shape:
 
 ```rust
-use these_macros_should_be_illegal::strutuct;
-
 #[derive(Debug)]
 pub struct Existing;
 
@@ -618,8 +566,6 @@ targets.
 The keyword is still only a validator:
 
 ```rust,compile_fail
-use these_macros_should_be_illegal::strutuct;
-
 strutuct! {
     Root {
         choice: struct Choice { First, Second },
@@ -638,8 +584,6 @@ generates. Rust variants always share their enum's visibility, so a visibility
 on a member that generates nothing is rejected rather than ignored:
 
 ```rust,compile_fail
-use these_macros_should_be_illegal::strutuct;
-
 strutuct! {
     VisibilityOnPlainVariants {
         // error: visibility applies to a generated payload type
@@ -653,8 +597,6 @@ A shape keyword decorates any payload the member generates, relative or exact,
 and is checked against the shape inferred from its body:
 
 ```rust
-use these_macros_should_be_illegal::strutuct;
-
 strutuct! {
     ExactPayloadWithKeyword {
         enum |Payload| { First, Second },
@@ -680,8 +622,6 @@ The parser resolves every declaration body in this order:
 The important neighboring forms are therefore:
 
 ```rust
-use these_macros_should_be_illegal::strutuct;
-
 pub struct Existing;
 
 strutuct! { Named { value: Existing } }
@@ -725,8 +665,6 @@ shape inference still decides the output, and a mismatched keyword is diagnosed:
 <div class="highlight-comparison-pane">
 
 ```rust
-use these_macros_should_be_illegal::strutuct;
-
 strutuct! {
     pub struct Request {
         method: enum Method { Get, Post, Delete },
@@ -773,8 +711,6 @@ type is hoisted as usual, while the surrounding container stays untouched:
 <div class="highlight-comparison-pane">
 
 ```rust
-use these_macros_should_be_illegal::strutuct;
-
 struct Delimited<T>(T);
 
 strutuct! {
@@ -866,8 +802,6 @@ body:
 <div class="highlight-comparison-pane">
 
 ```rust
-use these_macros_should_be_illegal::strutuct;
-
 strutuct! {
     State
     marker: |EmptyState|,
@@ -910,8 +844,6 @@ By default, a multi-field enum variant carries one tuple product:
 <div class="highlight-comparison-pane">
 
 ```rust
-use these_macros_should_be_illegal::strutuct;
-
 strutuct! {
     Value
     Pair(String, u8)
@@ -951,8 +883,6 @@ more useful:
 <div class="highlight-comparison-pane">
 
 ```rust
-use these_macros_should_be_illegal::strutuct;
-
 strutuct! {
     #[strutuct(product_variants = false)]
     Value
@@ -1002,8 +932,6 @@ variant branch:
 <div class="highlight-comparison-pane">
 
 ```rust
-use these_macros_should_be_illegal::strutuct;
-
 strutuct! {
     #[strutuct(public = false, reverse_concat = true)]
     struct Syntax {
@@ -1113,8 +1041,6 @@ declaration and every generated declaration below it:
 <div class="highlight-comparison-pane">
 
 ```rust
-use these_macros_should_be_illegal::strutuct;
-
 strutuct! {
     #[derive(Debug, Clone, PartialEq, Eq)]
     Token
@@ -1210,8 +1136,6 @@ before the generated type's name:
 <div class="highlight-comparison-pane">
 
 ```rust
-use these_macros_should_be_illegal::strutuct;
-
 strutuct! {
     /// A literal token recognized by the parser.
     Literal
@@ -1287,8 +1211,6 @@ constructor occurrence in an enum tree:
 <div class="highlight-comparison-pane">
 
 ```rust
-use these_macros_should_be_illegal::strutuct;
-
 strutuct! {
     #[strutuct(inclusions = true)]
     Token {

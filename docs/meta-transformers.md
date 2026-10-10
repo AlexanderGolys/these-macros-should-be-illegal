@@ -1,5 +1,7 @@
 # Meta transformers
 
+API reference on docs.rs: [`reflect!`](https://docs.rs/these-macros-should-be-illegal/latest/these_macros_should_be_illegal/macro.reflect.html), [`perm!`](https://docs.rs/these-macros-should-be-illegal/latest/these_macros_should_be_illegal/macro.perm.html).
+
 Meta transformers operate on invocation objects and token-stream structure
 rather than assuming that their input is a Rust item or expression.
 
@@ -8,8 +10,6 @@ rather than assuming that their input is a Rust item or expression.
 `reflect!` accepts two macro paths and an opaque body:
 
 ```rust
-use these_macros_should_be_illegal::reflect;
-
 macro_rules! add_one {
     ($expression:expr) => { 1 + $expression };
 }

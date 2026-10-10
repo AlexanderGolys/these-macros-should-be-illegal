@@ -1,13 +1,13 @@
 # Function-like syntax for callable objects
 
+API reference on docs.rs: [`callable`](https://docs.rs/these-macros-should-be-illegal/latest/these_macros_should_be_illegal/attr.callable.html), [`make_fn!`](https://docs.rs/these-macros-should-be-illegal/latest/these_macros_should_be_illegal/macro.make_fn.html).
+
 `callable` gives one method of a user-owned trait the structural alias
 `__priv_tmsbi_call`. `make_fn!` can then bind any implementation and generate a
 same-name macro which forwards its arguments to that alias. No shared callable
 trait is imposed by this crate.
 
 ```rust
-use these_macros_should_be_illegal::{callable, make_fn};
-
 #[callable(apply)]
 trait Action {
     fn apply(&self, point: usize) -> usize;
@@ -45,8 +45,6 @@ generics, return type, bounds, and async or unsafe behavior are retained.
 Mutable callable methods require a mutable binding:
 
 ```rust
-use these_macros_should_be_illegal::{callable, make_fn};
-
 #[callable(advance)]
 trait Advance {
     fn advance(&mut self, amount: usize) -> usize;

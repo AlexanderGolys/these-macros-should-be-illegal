@@ -1,30 +1,26 @@
 # Compile-time stringification
 
-The stringification macros turn one name or Rust type into a string literal at
-macro-expansion time. Their output is an ordinary `&'static str`, so it works in
-constants, patterns, generated attributes, and other constant contexts without
-runtime allocation.
+API reference: [`stringify_as!`](https://docs.rs/these-macros-should-be-illegal/latest/these_macros_should_be_illegal/macro.stringify_as.html) on docs.rs.
+
+`stringify_as!` turns one name or Rust type into a string literal at
+macro-expansion time; the option before `;` selects the spelling. The output is
+an ordinary `&'static str`, so it works in constants, patterns, generated
+attributes, and other constant contexts without runtime allocation.
 
 ## Name cases
 
-Each name macro accepts exactly one non-empty identifier or string literal.
+Each case option accepts exactly one non-empty identifier or string literal.
 Keywords and raw identifiers are accepted as names; the raw `r#` marker is not
 part of the result.
 
 ```rust
-use these_macros_should_be_illegal::{
-    stringify_camel_case, stringify_kebab_case, stringify_lowercase,
-    stringify_pascal_case, stringify_screaming_snake_case,
-    stringify_snake_case, stringify_uppercase,
-};
-
-const CAMEL: &str = stringify_camel_case!(some_HTTP_server);
-const PASCAL: &str = stringify_pascal_case!(some_HTTP_server);
-const SNAKE: &str = stringify_snake_case!(SomeHTTPServer);
-const KEBAB: &str = stringify_kebab_case!(SomeHTTPServer);
-const SHOUTING: &str = stringify_screaming_snake_case!(SomeHTTPServer);
-const LOWER: &str = stringify_lowercase!(Some_HTTP_Server);
-const UPPER: &str = stringify_uppercase!(Some_HTTP_Server);
+const CAMEL: &str = stringify_as!(camel; some_HTTP_server);
+const PASCAL: &str = stringify_as!(pascal; some_HTTP_server);
+const SNAKE: &str = stringify_as!(snake; SomeHTTPServer);
+const KEBAB: &str = stringify_as!(kebab; SomeHTTPServer);
+const SHOUTING: &str = stringify_as!(screaming_snake; SomeHTTPServer);
+const LOWER: &str = stringify_as!(lower; Some_HTTP_Server);
+const UPPER: &str = stringify_as!(upper; Some_HTTP_Server);
 
 assert_eq!(CAMEL, "someHttpServer");
 assert_eq!(PASCAL, "SomeHttpServer");
@@ -37,44 +33,38 @@ assert_eq!(UPPER, "SOME_HTTP_SERVER");
 
 The supported conversions are:
 
-| Macro | Result style |
+| Option | Result style |
 | --- | --- |
-| `stringify_camel_case!` | `lowerCamelCase` |
-| `stringify_pascal_case!` | `UpperCamelCase` or `PascalCase` |
-| `stringify_snake_case!` | `snake_case` |
-| `stringify_kebab_case!` | `kebab-case` |
-| `stringify_screaming_snake_case!` | `SCREAMING_SNAKE_CASE` |
-| `stringify_lowercase!` | Unicode lowercase; existing separators remain |
-| `stringify_uppercase!` | Unicode uppercase; existing separators remain |
+| `camel` | `lowerCamelCase` |
+| `pascal` | `UpperCamelCase` or `PascalCase` |
+| `snake` | `snake_case` |
+| `kebab` | `kebab-case` |
+| `screaming_snake` | `SCREAMING_SNAKE_CASE` |
+| `lower` | Unicode lowercase; existing separators remain |
+| `upper` | Unicode uppercase; existing separators remain |
 
 A string literal contributes its contents rather than its Rust source spelling,
 so this also converts names that cannot be written as one identifier:
 
 ```rust
-use these_macros_should_be_illegal::{
-    stringify_pascal_case, stringify_uppercase,
-};
-
-assert_eq!(stringify_pascal_case!("some-http-server"), "SomeHttpServer");
-assert_eq!(stringify_uppercase!(r#type), "TYPE");
+assert_eq!(stringify_as!(pascal; "some-http-server"), "SomeHttpServer");
+assert_eq!(stringify_as!(upper; r#type), "TYPE");
 ```
 
 The conventional word-based conversions use acronym and separator boundaries.
-The plain lowercase and uppercase variants only change character case; they do
+The plain `lower` and `upper` options only change character case; they do
 not otherwise normalize the separators.
 
 ## Rust types
 
-`stringify_type!` parses exactly one Rust type and emits a compact spelling with
+The `type` option parses exactly one Rust type and emits a compact spelling with
 the prefix `type:`:
 
 ```rust
-use these_macros_should_be_illegal::stringify_type;
-
-const SIMPLE: &str = stringify_type!(String);
-const BORROWED: &str = stringify_type!(&'static mut Vec<Option<String>>);
+const SIMPLE: &str = stringify_as!(type; String);
+const BORROWED: &str = stringify_as!(type; &'static mut Vec<Option<String>>);
 const FUNCTION: &str =
-    stringify_type!(fn((u8, u16), *const [u8; 4]) -> bool);
+    stringify_as!(type; fn((u8, u16), *const [u8; 4]) -> bool);
 
 assert_eq!(SIMPLE, "type:String");
 assert_eq!(BORROWED, "type:&'static mut Vec<Option<String>>");

@@ -19,21 +19,21 @@ trait Call<Rhs> {
 
 /// A finite zero-based permutation which fixes every omitted trailing position.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct Permutation {
+pub struct Permutation {
     /// Destination indexed by source, with the trailing fixed points removed.
     map_idx: Vec<usize>,
 }
 
 impl Permutation {
     /// Constructs the permutation which fixes every position.
-    pub(crate) fn identity() -> Self {
+    pub fn identity() -> Self {
         Self {
             map_idx: Vec::new(),
         }
     }
 
     /// Constructs a permutation map and removes its redundant fixed suffix.
-    pub(crate) fn new(mut map_idx: Vec<usize>) -> Self {
+    pub fn new(mut map_idx: Vec<usize>) -> Self {
         while map_idx
             .last()
             .is_some_and(|destination| *destination + 1 == map_idx.len())
@@ -44,7 +44,7 @@ impl Permutation {
     }
 
     /// Constructs the permutation represented by one zero-based cycle.
-    pub(crate) fn from_cycle(cycle: &[usize]) -> Self {
+    pub fn from_cycle(cycle: &[usize]) -> Self {
         let Some(maximum) = cycle.iter().copied().max() else {
             return Self::identity();
         };
@@ -60,12 +60,12 @@ impl Permutation {
     }
 
     /// Constructs the restriction of a mapping function to `0..bound`.
-    pub(crate) fn from_fn(bound: usize, f: impl Fn(usize) -> usize) -> Self {
+    pub fn from_fn(bound: usize, f: impl Fn(usize) -> usize) -> Self {
         Self::new((0usize..bound).map(f).collect())
     }
 
     /// Returns the smallest symmetric group containing this permutation.
-    pub(crate) fn min_size(&self) -> usize {
+    pub fn min_size(&self) -> usize {
         self.map_idx.len()
     }
 }
@@ -117,12 +117,37 @@ struct Invocation {
     trailing_comma: bool,
 }
 
+macro_docs! {
+    /// Permutes comma-separated token trees using standard cycle notation.
+    ///
+    /// Cycles compose from right to left and positions are one-based. Token trees
+    /// beyond the largest mentioned position remain fixed. Spaces are required
+    /// between positions because `14` is one integer token while `1 4` is two.
+    ///
+    /// ```text
+    /// perm! { ((1 4 3)), a, b, c, d, e }
+    /// // expands to the token stream: c, b, d, a, e
+    /// ```
+    ///
+    /// An empty cycle product demonstrates the identity in an ordinary expression
+    /// context; nontrivial products deliberately return a raw comma-separated
+    /// stream for structural consumers.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use these_macros_should_be_illegal::perm;
+    /// let fixed: &str = perm!((), "fixed");
+    /// assert_eq!(fixed.len(), 5);
+    /// ```
+}
+
 /// Applies a finite permutation to the leading positions of a token stream.
 ///
 /// Cycles compose from right to left and use one-based positions. Positions
 /// beyond the largest mentioned index are fixed, realizing the conventional
 /// embedding from `S_n` into every `S_{n+k}`.
-pub(crate) fn perm(input: TokenStream) -> TokenStream {
+pub fn perm(input: TokenStream) -> TokenStream {
     parse_invocation(input)
         .and_then(apply)
         .unwrap_or_else(Error::into_compile_error)

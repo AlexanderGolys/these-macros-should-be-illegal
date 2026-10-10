@@ -1,5 +1,7 @@
 # `shared_match_arms!`
 
+API reference on docs.rs: [`shared_match_arms!`](https://docs.rs/these-macros-should-be-illegal/latest/these_macros_should_be_illegal/macro.shared_match_arms.html).
+
 Rust or-patterns require every repeated binding to have the same concrete type.
 `shared_match_arms!` instead clones one RHS into several ordinary match arms,
 so each binding is type-checked independently:
@@ -14,8 +16,6 @@ so each binding is type-checked independently:
 <div class="highlight-comparison-pane">
 
 ```rust
-use these_macros_should_be_illegal::shared_match_arms;
-
 enum Value {
     Number(u32),
     Character(char),
@@ -71,8 +71,6 @@ Parenthesize a component when it has its own guard:
 <div class="highlight-comparison-pane">
 
 ```rust
-use these_macros_should_be_illegal::shared_match_arms;
-
 enum Value {
     Number(u32),
     Character(char),

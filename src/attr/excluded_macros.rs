@@ -4,10 +4,30 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{Error, ItemMacro, parse2};
 
-use super::preprocessing::{ExcludedMacros, ExpansionConfig, split_config_prefix};
+use crate::helpers::preprocessing::{ExcludedMacros, ExpansionConfig, split_config_prefix};
+
+macro_docs! {
+    /// Prevents transformations from descending into the listed macro invocations.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use these_macros_should_be_illegal::{excluded_macros, literally_literal_string};
+    /// macro_rules! raw_tokens { ($($tokens:tt)*) => { "borrowed" }; }
+    ///
+    /// #[excluded_macros(raw_tokens)]
+    /// literally_literal_string! {
+    ///     fn value() -> &'static str { raw_tokens!(@@"untouched") }
+    /// }
+    ///
+    /// fn main() {
+    ///     assert_eq!(value(), "borrowed");
+    /// }
+    /// ```
+}
 
 /// Adds excluded macro names to an invocation's shared preprocessing envelope.
-pub(crate) fn excluded_macros(arguments: TokenStream, item: TokenStream) -> TokenStream {
+pub fn excluded_macros(arguments: TokenStream, item: TokenStream) -> TokenStream {
     let result = parse2::<ExcludedMacros>(arguments)
         .and_then(|excluded| configure(ExpansionConfig::excluding(excluded), item));
 
