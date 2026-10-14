@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.10.0 - 2026-10-14
+
+### Added
+
+- `#[forall]` writes the constant part of a member declaration once and repeats
+  it over every field or variant: outer attributes, one visibility, the shared
+  types, or one group of shared named fields, written in any order. A tuple
+  struct whose fields are bare names becomes a braced struct of one shared type,
+  the variants of an enum take the shared types as unnamed fields or the shared
+  group beside their own named ones, and a created named field is documented
+  where the declaration documents none. A prefix forwarded by a declarative
+  macro is read like one written directly, including a `vis` fragment that
+  matched nothing and a field name arriving as a `ty` fragment.
+- Book chapter on `forall`.
+
 ## 0.9.0 - 2026-10-10
 
 ### Changed

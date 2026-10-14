@@ -43,6 +43,7 @@ attr_macro_cat_mod! { attr
     complete_ops;
     excluded_macros;
     forward_attributes;
+    forall;
 }
 
 macro_cat_mod! { generate

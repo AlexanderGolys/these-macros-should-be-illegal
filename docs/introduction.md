@@ -25,6 +25,8 @@ use these_macros_should_be_illegal::{
   string and generates a literal-selected delegating constructor.
 - [`enum_fn`](enum_fn.md) generates a method from inline per-variant match-arm
   expressions.
+- [`forall`](forall.md) distributes one constant visibility, type, attribute or
+  group of named fields over all fields or variants of an item.
 - [`callable` and `make_fn!`](callable.md) give a local object function-like
   syntax without erasing its type or its ordinary methods.
 - [`strutuct!`](strutuct.md), with `emmun!` as an exact alias, declares a small

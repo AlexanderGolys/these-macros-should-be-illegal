@@ -69,7 +69,10 @@ mod tests {
     /// A macro call standing for a name is rejected with an explanation.
     #[test]
     fn rejects_macro_calls_as_names() {
-        let error = parse_str::<MethodName>("name!()").err().unwrap().to_string();
+        let error = parse_str::<MethodName>("name!()")
+            .err()
+            .unwrap()
+            .to_string();
         assert!(error.contains("found a macro call"), "{error}");
     }
 

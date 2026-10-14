@@ -13,6 +13,8 @@ These macros parse a known local shape and generate ordinary Rust:
 - [`discriminated_str`](discriminated_str.md) creates a unique string mapping
   and a literal-selected constructor macro;
 - [`enum_fn`](enum_fn.md) turns per-variant expressions into a method;
+- [`forall`](forall.md) writes the constant part of a field or variant
+  declaration once and repeats it over all of them;
 - [`strutuct!`](strutuct.md), also exported as `emmun!`, generates related
   structs, enums, and constructor macros;
 - [`overload_op`](overload-op.md) repeats one operator written for references

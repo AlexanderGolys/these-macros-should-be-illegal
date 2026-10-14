@@ -5,6 +5,7 @@
   - [`callable` and `make_fn!`](callable.md)
   - [`discriminated_str`](discriminated_str.md)
   - [`enum_fn`](enum_fn.md)
+  - [`forall`](forall.md)
   - [`strutuct!`](strutuct.md)
   - [`overload_op`](overload-op.md)
   - [`complete_ops`](complete-ops.md)
