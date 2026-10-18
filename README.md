@@ -49,7 +49,7 @@ beside the variants. Fixed values, selected fields, closures, and missing arms
 can all live in the same enum:
 
 ```rust
-#[enum_fn(description: &str)]
+#[enum_fn(description -> &str)]
 enum Failure<'a> {
     Timeout = "the operation timed out",
     Message(String) = 0,
@@ -69,7 +69,7 @@ assert_eq!(Failure::Undescribed(7).description(), None);
 If selecting one field is not enough, use a closure over all the fields:
 
 ```rust
-#[enum_fn(display: String)]
+#[enum_fn(display -> String)]
 enum Name {
     Qualified(String, String) = |module, item| format!("{module}::{item}"),
     Anonymous = "<anonymous>",
@@ -79,6 +79,77 @@ assert_eq!(
     Name::Qualified("syntax".into(), "Expr".into()).display(),
     "syntax::Expr",
 );
+```
+
+## Write the constant part of a field once
+
+`forall` takes the beginning of one member declaration — outer attributes, a
+visibility, the shared types, or one group of shared named fields, in any
+order — and repeats it on every field or variant:
+
+```rust
+#[forall(pub(crate))]
+pub struct Pixel(u8, u8, u8);
+
+#[forall(pub, f32)]
+struct Point(x, y);
+
+#[forall(u16, String)]
+enum Response {
+    Redirect,
+    Error(&'static str),
+}
+
+#[forall({ code: u16 })]
+enum Request {
+    Read,
+    Write { payload: u8 },
+}
+```
+
+`Point` becomes a braced struct whose `x` and `y` are both `pub f32`, since a
+tuple struct given one shared type has its positions read as field names.
+`Response::Redirect` gains `(u16, String)` and `Response::Error` gains them
+after its own field, while every variant of `Request` gains the named `code`.
+A member keeps the visibility it declares itself, and a created named field is
+documented unless the declaration documents it.
+
+## Read a struct as the product over its field names
+
+A struct is a product over its field names, and when every field holds one type
+`X` that product is an exponential: `S = X^E = Hom(E, X)`. `Log` derives that
+index set `E`, which makes the evaluation map `E x S -> X` an ordinary indexing
+operator:
+
+```rust
+#[derive(Log)]
+#[allow(non_snake_case)]
+struct BaseGroups {
+    Keyword: Style,
+    Function: Style,
+    Bg: Style,
+    Text: Style,
+}
+
+let mut groups = BaseGroups { /* ... */ };
+groups[LogBaseGroups::Bg] = Style::default();
+
+assert_eq!(groups[LogBaseGroups::Keyword], groups.Keyword);
+```
+
+The variants are spelled exactly as the fields, and the enum is named `Log` and
+the struct's name unless its `log` attribute declares it:
+`#[log(pub enum Axis)]`. Fields holding different types are a genuine product
+with no single `X` to index out of, so they derive the enum alone. Attribute
+macros run before derives, so with
+[`forall`](#write-the-constant-part-of-a-field-once) above it the whole family
+costs one line each:
+
+```rust
+#[forall(pub, Style)]
+#[derive(Log)]
+#[log(pub Group)]
+struct Theme(Keyword, Function, Bg);
 ```
 
 ## Give variants genuine string discriminants
@@ -152,7 +223,9 @@ strutuct! {
     Status { Ready, Waiting }
 }
 
-assert_eq!(format!("{:?}", Status::Ready), "Ready");
+fn main() {
+    assert_eq!(format!("{:?}", Status::Ready), "Ready");
+}
 ```
 
 `forward_attributes` moves every remaining outer attribute behind a `;` inside
@@ -183,12 +256,17 @@ Postfix `T?` and `T*` mean `Option<T>` and `Box<T>`.
 Nested enums compose through their generated macros:
 
 ```rust
+pub struct Pref(pub u8);
+pub struct Post(pub u8);
+pub struct Bin(pub u8);
+
 strutuct! {
-    Expr
-    Unary { (Pref), (Post) }
-    (Bin)
-    LitStr(String)
-    Null
+    enum Expr {
+        Unary(Unary { (Pref), (Post) }),
+        (Bin),
+        LitStr(String),
+        Null,
+    }
 }
 
 let prefix = Expr!(Unary::Pref(1));
@@ -255,11 +333,12 @@ pub fn greeting() -> String {
 
 ## `enum_fn` details
 
-The name and type inside the attribute become the method signature. The macro
-does not infer, clone, or convert its result:
+The attribute argument is the method signature, `vis name -> Type`; without a
+visibility the method is private, as in ordinary Rust. The macro does not
+infer, clone, or convert its result:
 
 ```rust
-#[enum_fn(label: String)]
+#[enum_fn(label -> String)]
 enum OwnedLabel {
     Fixed = String::from("fixed"),
     Dynamic(String) = |value| (*value).clone(),
@@ -285,7 +364,7 @@ closure without downgrading the method.
 Missing descriptions can use their variant names instead of `None`:
 
 ```rust
-#[enum_fn(description: &'static str = stringify)]
+#[enum_fn(description -> &'static str = stringify)]
 enum State {
     Explicit = "custom spelling",
     Generated,
@@ -301,70 +380,102 @@ fun.
 
 ## `strutuct!` details
 
-If the body starts like `name: Type`, it is a struct. One parenthesized product
-with at least two elements is a tuple struct. Everything else is an enum.
-Nested declarations come out before the declarations using them.
+A parenthesized body declares a tuple struct. A braced body starting like
+`name: Type` is a struct, and any other braced body is an enum. Nested
+declarations come out before the declarations using them.
 
 The root body may be wrapped in braces, and optional `struct`/`enum` keywords
-are checked against the shape inferred from its members. Standard visibility
-and `priv` work on generated declarations and fields. Use
-`#[strutuct(public = false)]` for ordinary private-by-default Rust visibility.
+are checked against the shape inferred from its members. Everything generated
+is private unless a visibility says otherwise, exactly as in ordinary Rust.
 
-Inside an enum, parentheses refer to terminal payload types that already exist.
-Vertical bars declare the generated payload type's name. Without a body, a
-bar-named declaration generates a nominal unit type (the `()` case, not `!`):
+Enum variants are written exactly as in Rust and stay ordinary variants:
+
+```text
+Name                 unit variant
+Name(), Name(T, U)   tuple-like variant
+Name {}, Name { x: T } struct-like variant
+```
+
+New types are declared only where a type is expected: in a named or tuple
+field, or in a variant's parentheses. There, `Name { ... }` declares a
+struct or enum and `Name(...)` declares a tuple struct, both named relative to
+their generated parent. Bars request an exact name instead, and a bar-named
+declaration without a body is a nominal unit type (the `()` case, not `!`):
+
+```text
+field: Name { ... }    defines struct or enum ParentName
+field: Name(T, U)      defines tuple struct ParentName
+field: |Type| { ... }  defines Type
+field: |Type|(T, U)    defines tuple struct Type
+field: |Type|          defines unit struct Type
+Name(Inner { ... })    defines ParentInner and emits Name(ParentInner)
+```
+
+A braced body never contains a bare type, so `Name { ... }` and `Name(...)`
+directly inside one are always variants. Keywords never name a declaration, so
+`fn(u8) -> u8` stays a function pointer.
+
+Enums also accept three payload shortcuts whose variant name is derived:
 
 ```text
 Name |Type| { ... }  defines Type and emits Name(Type)
-Name |Type|          defines unit Type and emits Name(Type)
-Name { ... }         defines ParentName and emits Name(ParentName)
 |Type| { ... }       defines Type and emits TypeParent(Type)
-|Type|               defines unit Type and emits TypeParent(Type)
-Name(Type)           uses Type and stays Name(Type)
-Name                 stays Name
 (Type)               uses Type and becomes TypeParent(Type)
 ```
 
-For struct fields, bare `field: Type` uses an existing Rust type, braced
-`field: Name { ... }` generates `ParentName`, and bars request an exact generated
-name, as in `field: |Type| { ... }`. A body in `{ ... }` can itself describe a
-struct, tuple struct, or enum; bare `field: |EmptyState|` generates an exact
-nominal unit type.
-Multi-field tuple-like variants carry one tuple product, so `Pair(X, Y)` emits
-`Pair((X, Y))`. Struct-like syntax similarly creates a product type by default:
+To have multi-field variants carry one product instead, turn on
+`product_variants`: `Pair(X, Y)` then emits `Pair((X, Y))`, and
+`Span { start: usize }` emits `Span(ValueSpan)` with a generated `ValueSpan`:
 
 ```rust
 strutuct! {
-    Value
-    String { Raw, Escaped }
-    Span { start: usize, end: usize }
-}
-```
-
-This creates `ValueString` and `ValueSpan`, while the variants remain pleasantly
-named `String(ValueString)` and `Span(ValueSpan)`.
-
-If ordinary Rust multi-field variants are useful for one declaration family,
-turn product lowering off with an outer configuration attribute:
-
-```rust
-strutuct! {
-    #[strutuct(product_variants = false)]
-    Value
-    Pair(String, String)
-    Span { start: usize, end: usize }
     #[strutuct(product_variants = true)]
-    StillPacked(String, String)
+    enum Value {
+        Pair(String, String),
+        Span { start: usize, end: usize },
+        #[strutuct(product_variants = false)]
+        Plain(String, String),
+    }
 }
 ```
 
 The same attribute before a variant overrides the declaration-wide setting.
 
 `#[strutuct(reverse_concat = true)]` reverses automatically generated names,
-turning `ParentName` into `NameParent`. All configuration options can be applied
-to the whole family or locally before one field or variant branch. The current
-complete option set is `inclusions`, `product_variants`, `public`, and
-`reverse_concat`.
+turning `ParentName` into `NameParent`. The current complete option set is a
+visibility, `inclusions`, `product_variants`, and `reverse_concat`. Options are
+outer attributes, so they go where Rust accepts one: before the root
+declaration, a named or tuple field, or a variant. They apply to that object
+and everything generated below it. A type position, such as after `field:`,
+is not an attribute position and rejects them.
+
+The two visibility positions differ exactly in that reach. Written before a
+declaration or field, a visibility belongs to that one object, as in Rust.
+Written as an option, it becomes the default for that object and every
+declaration and field generated below it, down to the leaves:
+
+```rust
+mod api {
+    # use these_macros_should_be_illegal::strutuct;
+    strutuct! {
+        #[strutuct(pub(crate))]
+        struct Request {
+            method: Method { Get, Post },
+            priv secret: Secret { token: String },
+        }
+    }
+}
+```
+
+`Request`, `RequestMethod`, `RequestSecret` and their fields all become
+`pub(crate)`, except the `secret` field itself: a written visibility, here
+`priv`, wins locally and leaves the branch below it alone. `priv` is the
+explicit private counterpart used to override an inherited visibility, and
+`pub`, `pub(crate)`, `pub(super)` and `pub(in path)` are inherited as written.
+
+As in Rust, attributes and visibility before a tuple element belong to that
+field, and a variant takes no visibility: write a payload's visibility before
+the payload type, as in `Branch(priv Branch { A, B })`.
 
 When extended syntax could be read as unusually shaped Rust, `strutuct!` parses
 it according to its own grammar. The spellings are chosen to keep realistic
@@ -382,12 +493,9 @@ they accept each generated item shape. Generated enums use Rust's ordinary
 declarations suppress `dead_code`, constructor macros suppress `unused_macros`,
 and `cfg`/`cfg_attr` guard both corresponding items.
 
-Inline declarations may occur inside ordinary generic containers, so a field
-such as `Delimited<Option<Content { Empty, Value(String) }>>` in `Arguments`
-hoists `ArgumentsContent` and leaves the surrounding container intact. Use
-`Delimited<Option<|ArgumentListContent| { ... }>>` when the generated name
-should be exact. The more Rust-like `Vec<enum Element { A, B }>` spelling works
-too.
+Declarations appear directly as a field or tuple element type, optionally
+wrapped by `?` or `*`. Any other Rust type, including everything inside generic
+arguments, is copied unchanged, so `Box<dyn Fn(u8) -> u8>` keeps its meaning.
 
 Each generated type also gets a constructor macro in Rust's conveniently
 separate macro namespace. Every enum macro eats one path segment and calls the
@@ -450,11 +558,12 @@ expand!(
 );
 ```
 
-Or wrap a configuration-aware item-position macro:
+Or write the same option first in a whole-stream macro's own input:
 
 ```rust
-#[excluded_macros(raw_tokens)]
 literally_literal_string! {
+    exclude_macros = (raw_tokens);
+
     // transformed tokens
 }
 ```

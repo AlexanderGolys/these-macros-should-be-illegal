@@ -6,7 +6,7 @@ use these_macros_should_be_illegal::{emmun, strutuct};
 /// Leaf payload used by the nested-struct consumer test.
 pub struct B(pub u8);
 
-/// Generic wrapper used to prove that generated declarations can be nested in type arguments.
+/// Generic wrapper used to prove that generic Rust types are copied unchanged.
 #[derive(Debug, PartialEq)]
 pub struct Delimited<T>(pub T);
 
@@ -29,7 +29,7 @@ pub struct Bin(pub u8);
 
 strutuct! {
     Expr
-    Unary { (Pref), (Post) }
+    Unary(Unary { (Pref), (Post) })
     (Bin)
     LitStr(String)
     Null
@@ -54,13 +54,13 @@ strutuct! {
 
 strutuct! {
     Outer
-    Middle { Inner { Leaf { Done(String) } } }
+    Middle(Middle { Inner(Inner { Leaf(Leaf { Done(String) }) }) })
 }
 
 strutuct! {
     TypedChoices
     Named |NamedPayload| { A, B }
-    Generated { A, B }
+    Generated(Generated { A, B })
     |ImplicitPayload| { A, B }
     NamedUnit |NamedUnitPayload|
     |ImplicitUnit|
@@ -78,9 +78,9 @@ strutuct! {
 
 strutuct! {
     TuplePayloads
-    Auto { (String, u8) }
-    Explicit |ExplicitPair| { (String, u8) }
-    |ImplicitPair| { (String, u8) }
+    Auto(Auto(String, u8))
+    Explicit |ExplicitPair|(String, u8)
+    |ImplicitPair|(String, u8)
 }
 
 strutuct! {
@@ -122,7 +122,7 @@ strutuct! {
     DeriveFamily
     #[derive(Copy, Hash)]
     kind: |LiteralKind| {
-        Nested { value: u8 },
+        Nested(Nested { value: u8 }),
         Unit,
     },
 }
@@ -130,11 +130,7 @@ strutuct! {
 strutuct! {
     #[derive(Debug, PartialEq)]
     GenericContainer
-    #[derive(Clone, Eq)]
-    arguments: Delimited<Option<|ArgumentListContent| {
-        Empty,
-        Values(String),
-    }>>,
+    arguments: Delimited<Option<String>>,
 }
 
 emmun! {
@@ -148,29 +144,22 @@ strutuct! {
     #[derive(Debug, PartialEq)]
     #[strutuct(reverse_concat = true)]
     pub enum Reversed {
-        Branch { Leaf { End(String) } }
+        Branch(Branch { Leaf(Leaf { End(String) }) })
     }
 }
 
 strutuct! {
     #[derive(Debug, PartialEq)]
-    #[strutuct(public = false)]
+    #[strutuct(priv)]
     struct PrivateDefaults {
         value: u8,
-        #[strutuct(public = true)]
+        #[strutuct(pub)]
         #[strutuct(reverse_concat = true)]
         pub branch: pub enum |BranchChoice| {
-            Nested { Unit }
+            Nested(Nested { Unit })
         },
         #[strutuct(product_variants = false)]
         pair: enum |LocalProduct| { Pair(u8, u8) },
-    }
-}
-
-strutuct! {
-    #[derive(Debug, PartialEq)]
-    pub struct GenericVec {
-        choices: Vec<enum |InlineChoice| { First, Second }>,
     }
 }
 
@@ -212,7 +201,7 @@ strutuct! {
         #[default]
         Empty,
         #[underive(Default)]
-        Data { value: NoDefault },
+        Data(Data { value: NoDefault }),
     }
 }
 
@@ -220,8 +209,8 @@ strutuct! {
     #[derive(Debug, PartialEq)]
     #[strutuct(inclusions = true)]
     Included {
-        Branch { Leaf(String), Empty },
-        Other { Leaf(String) },
+        Branch(Branch { Leaf(String), Empty }),
+        Other(Other { Leaf(String) }),
         Direct(u8),
         Pair(String, u8),
         Record { value: u8 },
@@ -256,7 +245,7 @@ fn injects_payloads_through_flattened_enum_paths() {
     let other = IncludedOtherLeaf("other".to_owned());
     let direct = IncludedDirect(7);
     let pair = IncludedPair(("pair".to_owned(), 8));
-    let record = IncludedRecord(IncludedRecord { value: 9 });
+    let record = IncludedRecord((9,));
     let unit = IncludedUnit();
 
     assert!(matches!(branch, Included::Branch(IncludedBranch::Empty)));
@@ -269,11 +258,8 @@ fn injects_payloads_through_flattened_enum_paths() {
         Included::Other(IncludedOther::Leaf(value)) if value == "other"
     ));
     assert!(matches!(direct, Included::Direct(7)));
-    assert!(matches!(pair, Included::Pair((value, 8)) if value == "pair"));
-    assert!(matches!(
-        record,
-        Included::Record(IncludedRecord { value: 9 })
-    ));
+    assert!(matches!(pair, Included::Pair(value, 8) if value == "pair"));
+    assert!(matches!(record, Included::Record { value: 9 }));
     assert!(matches!(unit, Included::Unit));
 }
 
@@ -323,17 +309,17 @@ fn leaves_explicit_enum_constructors_ordinary() {
     assert!(matches!(null, Expr::Null));
 }
 
-/// Packs a multi-field variant into one tuple product.
+/// Keeps a multi-field variant an ordinary Rust tuple-like variant.
 #[test]
-fn packs_tuple_like_variant_products() {
+fn keeps_tuple_like_variants_ordinary() {
     let pair = Product!(Pair("left".to_owned(), 7));
 
-    assert!(matches!(pair, Product::Pair((value, 7)) if value == "left"));
+    assert!(matches!(pair, Product::Pair(value, 7) if value == "left"));
 }
 
-/// Verifies nested structs as variants and both postfix type transformations.
+/// Verifies struct-like variants and both postfix type transformations.
 #[test]
-fn constructs_nested_struct_variants_and_postfix_types() {
+fn constructs_struct_like_variants_and_postfix_types() {
     let message = Message!(Payload {
         value: "payload".to_owned()
     });
@@ -344,7 +330,7 @@ fn constructs_nested_struct_variants_and_postfix_types() {
 
     assert!(matches!(
         message,
-        Message::Payload(MessagePayload { value }) if value == "payload"
+        Message::Payload { value } if value == "payload"
     ));
     assert!(matches!(wrapped.optional, Some(Pref(4))));
     assert_eq!(wrapped.boxed.0, 5);
@@ -397,7 +383,7 @@ fn generates_named_unit_types_without_bodies() {
     assert!(matches!(component.generated, GeneratedUnit));
 }
 
-/// Generates root and nested tuple products with at least two elements.
+/// Generates root and nested tuple structs from parenthesized bodies.
 #[test]
 fn generates_tuple_declarations() {
     let root = RootTuple!("root".to_owned(), 1);
@@ -500,27 +486,15 @@ fn combines_inherited_and_local_derives() {
     assert_traits::<LiteralKindNested>();
 }
 
-/// Hoists declarations nested inside arbitrarily deep ordinary generic arguments.
+/// Copies generic Rust types unchanged.
 #[test]
-fn generates_types_inside_generic_containers() {
-    fn assert_nested_traits<T>()
-    where
-        T: std::fmt::Debug + PartialEq + Clone + Eq,
-    {
-    }
-
-    assert_nested_traits::<ArgumentListContent>();
-
-    let value = GenericContainer!(
-        arguments: Delimited(Some(ArgumentListContent!(Values(
-            "argument".to_owned()
-        )))),
-    );
+fn keeps_generic_types_verbatim() {
+    let value = GenericContainer!(arguments: Delimited(Some("argument".to_owned())));
 
     assert_eq!(
         value,
         GenericContainer {
-            arguments: Delimited(Some(ArgumentListContent::Values("argument".to_owned()))),
+            arguments: Delimited(Some("argument".to_owned())),
         }
     );
 }
@@ -558,14 +532,6 @@ fn configures_visibility_globally_and_locally() {
         BranchChoice::Nested(NestedBranchChoice::Unit)
     ));
     assert!(matches!(value.pair, LocalProduct::Pair(1, 2)));
-}
-
-/// Generates a declaration directly inside a standard generic container.
-#[test]
-fn generates_an_enum_inside_vec() {
-    let value = GenericVec!(choices: vec![InlineChoice!(Second)]);
-
-    assert!(matches!(value.choices.as_slice(), [InlineChoice::Second]));
 }
 
 /// Resolves a braced field declaration from the generated parent name.

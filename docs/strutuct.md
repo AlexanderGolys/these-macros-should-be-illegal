@@ -4,7 +4,8 @@ API reference on docs.rs: [`strutuct!`](https://docs.rs/these-macros-should-be-i
 
 `strutuct!` keeps small related types where they are used, then hoists them into
 ordinary Rust declarations in dependency order. Generated declarations and
-fields are public by default. `emmun!` is an exact alias with the same syntax.
+fields are private unless a visibility says otherwise. `emmun!` is an exact
+alias with the same syntax.
 
 <div class="highlight-comparison-key">
   <strong>You write</strong>
@@ -12,38 +13,34 @@ fields are public by default. `emmun!` is an exact alias with the same syntax.
 </div>
 
 <div class="highlight-comparison">
-
 <div class="highlight-comparison-pane">
 
-```rust,ignore
+```rust
 strutuct! {
     Request
     method: Method { Get, Post },
     body: String?,
 }
 ```
-
 </div>
 
 <div class="highlight-comparison-pane">
 
 ```rust,ignore
-pub enum RequestMethod {
+enum RequestMethod {
     Get,
     Post,
 }
 
-pub struct Request {
-    pub method: RequestMethod,
-    pub body: Option<String>,
+struct Request {
+    method: RequestMethod,
+    body: Option<String>,
 }
 
 // RequestMethod!(...) and Request!(...)
 // constructor macros are generated too.
 ```
-
 </div>
-
 </div>
 
 Outer attributes can configure the complete generated family through
@@ -76,7 +73,7 @@ fn main() {
 
 ```rust,ignore
 #[derive(Debug, PartialEq)]
-pub enum Forwarded {
+enum Forwarded {
     First,
     Second,
 }
@@ -119,15 +116,15 @@ assert!(matches!(request.method, RequestMethod::Post));
 <div class="highlight-comparison-pane">
 
 ```rust,ignore
-pub enum RequestMethod {
+enum RequestMethod {
     Get,
     Post,
     Delete,
 }
 
-pub struct Request {
-    pub method: RequestMethod,
-    pub body: Option<String>,
+struct Request {
+    method: RequestMethod,
+    body: Option<String>,
 }
 
 let request = Request {
@@ -154,8 +151,8 @@ do not change how a declaration body is classified.
 
 ### Root declarations
 
-A nonempty body produces a named-field struct, a tuple struct, or an enum. The
-body shape selects which one:
+A parenthesized body produces a tuple struct; a nonempty braced body produces a
+named-field struct or an enum:
 
 ```rust
 strutuct! {
@@ -166,9 +163,7 @@ strutuct! {
 }
 
 strutuct! {
-    struct Pair {
-        (u8, u16)
-    }
+    struct Pair(u8, u16)
 }
 
 strutuct! {
@@ -179,9 +174,8 @@ strutuct! {
 }
 ```
 
-A body beginning with `name: Type` is a named-field struct. A body consisting
-of exactly one parenthesized list of two or more types is a tuple struct. Every
-other nonempty body is an enum.
+A braced body beginning with `name: Type` is a named-field struct. Every other
+nonempty braced body is an enum. A parenthesized body is a tuple struct.
 
 The `struct` and `enum` keywords are optional checks on the inferred shape.
 They do not force a body to have that shape.
@@ -241,8 +235,8 @@ strutuct! {
 This declares `StructsRelative`, `Exact`, and the unit struct `Marker` in
 addition to `Structs`.
 
-Nested braced bodies use the same inference rules as roots. Consequently a
-field may declare any non-unit shape:
+Nested bodies use the same inference rules as roots. Consequently a field may
+declare any shape:
 
 ```rust
 pub struct Existing;
@@ -250,7 +244,7 @@ pub struct Existing;
 strutuct! {
     Container {
         record: Record { value: Existing },
-        pair: Pair { (Existing, Existing) },
+        pair: Pair(Existing, Existing),
         choice: Choice { First, Second },
     }
 }
@@ -283,76 +277,71 @@ strutuct! {
 
 ### Tuple structs
 
-A tuple declaration is one complete parenthesized product containing at least
-two types. The rule is identical at the root and inside another declaration:
+A parenthesized body declares a tuple struct, at the root and wherever a type is
+expected. Each element is a type, which may itself declare nested types:
 
 ```rust
 pub struct Left;
 pub struct Right;
 
 strutuct! {
-    Pair {
-        (Left, Right)
-    }
+    Pair(Left, Right)
 }
 
 strutuct! {
     RelativeHolder {
-        pair: Pair { (Left, Right) },
+        pair: Pair(Left, Choice { A, B }),
+        single: Single(Left),
+        empty: Empty(),
     }
 }
 
 strutuct! {
     ExactHolder {
-        pair: |ExactPair| { (Left, Right) },
+        pair: |ExactPair|(Left, Right),
     }
 }
 ```
 
-These declarations produce `Pair`, `RelativeHolderPair`, and `ExactPair` as
-tuple structs.
+These declarations produce `Pair`, `RelativeHolderPair`, `RelativeHolderSingle`,
+`RelativeHolderEmpty`, and `ExactPair` as tuple structs. Keywords never name a
+declaration, so `fn(Left) -> Right` stays a function pointer type.
+
+As in Rust, attributes and visibility before a tuple element belong to that
+field, exactly as they do before a named field:
+
+```rust
+pub struct Left;
+
+strutuct! {
+    struct Fields(
+        #[strutuct(pub(crate))] Choice { A, B },
+        pub(crate) Left,
+        priv pub(crate) Inner(Left),
+    )
+}
+```
+
+Field `0` and `FieldsChoice` are `pub(crate)` from the inherited option, field
+`1` is `pub(crate)` as written, and field `2` is private while `FieldsInner`
+stays `pub(crate)`.
 
 #### Restrictions
 
-There are no generated zero-field or one-field tuple structs. A single
-parenthesized type is instead the implicit enum-variant form:
-
-```rust,compile_fail
-pub struct Existing;
-
-strutuct! {
-    struct OneField {
-        (Existing)
-    }
-}
-```
-
-An empty product is not a declaration body:
+Braces never declare a tuple struct; a parenthesized member inside braces is the
+implicit enum-variant form, which accepts exactly one type:
 
 ```rust,compile_fail
 strutuct! {
-    ZeroFields {
-        ()
-    }
-}
-```
-
-The product must be the entire body. Adding another member makes the body an
-enum body, where an implicit parenthesized variant may contain only one type:
-
-```rust,compile_fail
-strutuct! {
-    PairAndMore {
-        (u8, u16),
-        More,
+    NotATuple {
+        (u8, u16)
     }
 }
 ```
 
 ### Enums
 
-An enum accepts unit variants, tuple-like variants, existing implicit payload
-types, and generated payload declarations:
+Enum variants are written as in Rust and stay ordinary Rust variants:
 
 ```rust
 pub struct Existing;
@@ -363,12 +352,13 @@ strutuct! {
         EmptyTuple(),
         ExistingPayload(Existing),
         Product(Existing, Existing),
-        (Existing),
-
+        EmptyRecord {},
         Record { value: Existing },
-        Pair { (Existing, Existing) },
-        Nested { First, Second },
 
+        Nested(Nested { First, Second }),
+        Pair(Pair(Existing, Existing)),
+
+        (Existing),
         Named |Payload| { First, Second },
         |Implicit| { First, Second },
         NamedMarker |Marker|,
@@ -382,19 +372,24 @@ The forms mean:
 ```text
 Unit                          unit variant
 EmptyTuple()                  empty tuple-like variant
-ExistingPayload(Existing)     named variant using an existing type
-Product(Existing, Existing)   named multi-field variant
+ExistingPayload(Existing)     tuple-like variant using an existing type
+Product(Existing, Existing)   multi-field tuple-like variant
+EmptyRecord {}                empty struct-like variant
+Record { value: Existing }    struct-like variant
+
+Nested(Nested { ... })        variant carrying a relative enum declaration
+Pair(Pair(...))               variant carrying a relative tuple declaration
+
 (Existing)                    existing payload with an inferred variant name
-
-Record { value: Existing }    variant plus relative named-field payload
-Pair { (Existing, Existing) } variant plus relative tuple payload
-Nested { First, Second }      variant plus relative enum payload
-
 Named |Payload| { ... }       named variant plus exact payload declaration
 |Implicit| { ... }            exact payload and inferred variant name
 NamedMarker |Marker|          named variant plus exact unit payload
 |ImplicitMarker|              exact unit payload and inferred variant name
 ```
+
+A braced body never contains a bare type, so `Name { ... }` and `Name(...)`
+directly inside it are always variants. Types, including new declarations,
+appear inside the parentheses of a variant or after a field name.
 
 `(Existing)` uses an already declared type. `|Implicit| { ... }` declares a new
 type. Parentheses and vertical bars are therefore not interchangeable.
@@ -409,15 +404,26 @@ strutuct! {
     Punctuation {
         First
         Second(Existing)
-        Third { A B }
+        Third { value: Existing }
     }
 }
 ```
 
-`Name` and `Name()` are both legal and distinct, just as they are in an
-ordinary Rust enum.
+`Name`, `Name()`, and `Name {}` are all legal and distinct, just as they are in
+an ordinary Rust enum.
 
 #### Restrictions
+
+Braces after a variant name hold named fields only, as in Rust. Write a nested
+enum as a type inside parentheses instead:
+
+```rust,compile_fail
+strutuct! {
+    NestedWithoutParentheses {
+        Nested { First, Second }
+    }
+}
+```
 
 An implicit parenthesized variant accepts exactly one type:
 
@@ -441,7 +447,7 @@ strutuct! {
 }
 ```
 
-Parentheses never declare a generated payload type. The former contextual
+Parenthesized variant fields are followed by nothing. The former contextual
 spellings are rejected:
 
 ```rust,compile_fail
@@ -456,16 +462,6 @@ strutuct! {
 strutuct! {
     OldImplicit {
         (Payload) { First, Second }
-    }
-}
-```
-
-Braced payload declarations must be nonempty:
-
-```rust,compile_fail
-strutuct! {
-    EmptyPayload {
-        Payload {}
     }
 }
 ```
@@ -490,11 +486,11 @@ Nesting continues to concatenate names:
 ```rust
 strutuct! {
     Root {
-        Relative {
-            Leaf { value: u8 }
-        }
+        Relative(Relative {
+            Leaf(Leaf { value: u8 })
+        })
         Named |Exact| {
-            Leaf { value: u8 }
+            Leaf(Leaf { value: u8 })
         }
     }
 }
@@ -573,22 +569,31 @@ strutuct! {
 }
 ```
 
-Tuple declaration components are currently type expressions only: unlike named
-fields, they do not have DSL positions for individual field attributes or
-visibility.
+Tuple fields have the same two positions: `(priv priv Inner(u8))` is a private
+field of the private type `ParentInner`.
 
-#### Member visibility and shape keywords
+#### Variant visibility and shape keywords
 
-A visibility before an enum member applies to the payload type that member
-generates. Rust variants always share their enum's visibility, so a visibility
-on a member that generates nothing is rejected rather than ignored:
+As in Rust, a variant has no visibility of its own; it always shares its enum's.
+Write the visibility of a generated payload before the payload type:
+
+```rust
+strutuct! {
+    enum Choice {
+        Branch(priv Branch { A, B }),
+        priv |Exact| { A, B },
+    }
+}
+```
+
+A leading `|Payload|` member is the payload declaration itself, so its header
+may carry the payload's visibility. Before a variant name it is rejected:
 
 ```rust,compile_fail
 strutuct! {
-    VisibilityOnPlainVariants {
-        // error: visibility applies to a generated payload type
-        pub Unit,
-        priv Existing(u8),
+    VisibilityOnVariants {
+        // error: a variant takes no visibility
+        priv Branch(Branch { A, B }),
     }
 }
 ```
@@ -614,10 +619,9 @@ assert!(matches!(named, ExactPayloadWithKeyword::Named(Marker)));
 
 The parser resolves every declaration body in this order:
 
-1. A leading `name: Type` makes the complete body a named-field struct.
-2. Otherwise, one complete `(A, B, ...)` body with at least two types makes a
-   tuple struct.
-3. Every other nonempty body is an enum.
+1. A parenthesized body is a tuple struct.
+2. A braced body with a leading `name: Type` is a named-field struct.
+3. Every other nonempty braced body is an enum.
 
 The important neighboring forms are therefore:
 
@@ -625,17 +629,18 @@ The important neighboring forms are therefore:
 pub struct Existing;
 
 strutuct! { Named { value: Existing } }
-strutuct! { Tuple { (Existing, Existing) } }
+strutuct! { Tuple(Existing, Existing) }
 strutuct! { Sum { First, Second } }
 strutuct! { OneParenthesized { (Existing) } }
 strutuct! { NamedVariant { Pair(Existing, Existing) } }
 strutuct! { EmptyTupleVariant { Empty() } }
+strutuct! { EmptyStructVariant { Empty {} } }
 ```
 
 `OneParenthesized` is an enum, not a one-field tuple struct.
 `NamedVariant` is an enum because `Pair` precedes the parentheses.
-`EmptyTupleVariant` is an enum with one fieldless tuple-like variant; it is not
-an empty declaration.
+`EmptyTupleVariant` and `EmptyStructVariant` are enums with one fieldless
+variant; neither is an empty declaration.
 
 This precedence leaves no token sequence with two possible declaration shapes.
 Some neighboring spellings intentionally mean different things, and invalid
@@ -645,11 +650,11 @@ mixtures fail instead of falling through to another shape.
 
 The body shape decides what gets generated:
 
-- leading `name: Type` members form a struct;
-- one parenthesized product containing at least two types forms a tuple struct;
-- anything else forms an enum.
+- a parenthesized body forms a tuple struct;
+- a braced body of leading `name: Type` members forms a struct;
+- any other braced body forms an enum.
 
-Nested `{ ... }` bodies use the same rules recursively.
+Nested bodies use the same rules recursively.
 
 The root body may either follow its name directly or use ordinary declaration
 braces. Optional `struct` and `enum` keywords make the input look more like Rust;
@@ -678,15 +683,15 @@ strutuct! {
 <div class="highlight-comparison-pane">
 
 ```rust,ignore
-pub enum RequestMethod {
+enum RequestMethod {
     Get,
     Post,
     Delete,
 }
 
 pub struct Request {
-    pub method: RequestMethod,
-    pub body: Option<String>,
+    method: RequestMethod,
+    body: Option<String>,
 }
 ```
 
@@ -695,101 +700,39 @@ pub struct Request {
 </div>
 
 Standard Rust visibility forms and `priv` are accepted before generated
-declarations and named fields. `priv` is the explicit private counterpart to
-the macro's default-public behavior.
+declarations and named fields, where they mean what they mean in Rust. Written
+as an option instead, a visibility is inherited by everything generated below
+it; see [configuration and visibility](#configuration-and-visibility).
 
-Nested declarations can also appear inside ordinary generic types. The generated
-type is hoisted as usual, while the surrounding container stays untouched:
-
-<div class="highlight-comparison-key">
-  <strong>You write</strong>
-  <strong>Roughly expands to</strong>
-</div>
-
-<div class="highlight-comparison">
-
-<div class="highlight-comparison-pane">
-
-```rust
-struct Delimited<T>(T);
-
-strutuct! {
-    Arguments
-    content: Delimited<Option<|ArgumentListContent| {
-        Empty,
-        Values(Vec<String>),
-    }>>,
-}
-
-let arguments = Arguments!(
-    content: Delimited(Some(ArgumentListContent!(Empty))),
-);
-
-assert!(matches!(
-    arguments.content,
-    Delimited(Some(ArgumentListContent::Empty)),
-));
-```
-
-</div>
-
-<div class="highlight-comparison-pane">
-
-```rust,ignore
-struct Delimited<T>(T);
-
-pub enum ArgumentListContent {
-    Empty,
-    Values(Vec<String>),
-}
-
-pub struct Arguments {
-    pub content: Delimited<Option<ArgumentListContent>>,
-}
-
-let arguments = Arguments {
-    content: Delimited(Some(ArgumentListContent::Empty)),
-};
-
-assert!(matches!(
-    arguments.content,
-    Delimited(Some(ArgumentListContent::Empty)),
-));
-```
-
-</div>
-
-</div>
-
-This works recursively through generic arguments, tuples, arrays, references,
-and other grouped type syntax. A declaration inside a type macro invocation is
-left to that macro instead of being hoisted by `strutuct!`.
-
-Keywords, visibility, attributes, and local configuration work inside generic
-arguments as well. For example, `Vec<priv enum |Choice| { A, B }>` hoists a
-private `Choice` enum and leaves the field type as `Vec<Choice>`.
+Declarations appear directly as a field or tuple element type, optionally
+wrapped by postfix `?` or `*`. Every other Rust type is copied unchanged,
+including its generic arguments, so `Vec<Box<dyn Fn(u8) -> u8>>` keeps its
+Rust meaning and `Vec<Choice { A, B }>` is not a declaration. Declare the
+element type in its own field or tuple element instead.
 
 ## Enum grammar
 
-Parentheses refer to terminal payload types that already exist. Vertical bars
-declare the generated payload type's name.
+Variants follow Rust; new types are declared only in type positions. Vertical
+bars declare the generated payload type's exact name.
 
 ```text
-Name |Type| { ... }  defines Type and emits Name(Type)
-Name |Type|          defines unit Type and emits Name(Type)
-Name { ... }         defines ParentName and emits Name(ParentName)
-|Type| { ... }       defines Type and emits TypeParent(Type)
-|Type|               defines unit Type and emits TypeParent(Type)
-Name(Type)           uses Type and stays Name(Type)
-Name                 stays Name
-(Type)               uses Type and becomes TypeParent(Type)
+Name                  stays Name
+Name(T, U)            stays Name(T, U)
+Name { x: T }         stays Name { x: T }
+Name(Inner { ... })   defines ParentInner and emits Name(ParentInner)
+Name(Inner(T, U))     defines tuple ParentInner and emits Name(ParentInner)
+Name |Type| { ... }   defines Type and emits Name(Type)
+Name |Type|           defines unit Type and emits Name(Type)
+|Type| { ... }        defines Type and emits TypeParent(Type)
+|Type|                defines unit Type and emits TypeParent(Type)
+(Type)                uses Type and becomes TypeParent(Type)
 ```
 
 A bare `|Type|` generates the nominal unit struct `pub struct Type;`: this is
 the `()` case, not the uninhabited `!` case. Struct fields follow the same
 distinction: `field: Type` uses an existing Rust type, `field: Name { ... }`
-generates `ParentName`, and `field: |Type| { ... }` generates the exact name
-`Type`. The bar spelling also generates an exact unit field type without a
+and `field: Name(...)` generate `ParentName`, and `field: |Type| { ... }`
+generates the exact name `Type`. The bar spelling also generates an exact unit field type without a
 body:
 
 <div class="highlight-comparison-key">
@@ -815,10 +758,10 @@ let state = State!(marker: EmptyState);
 <div class="highlight-comparison-pane">
 
 ```rust,ignore
-pub struct EmptyState;
+struct EmptyState;
 
-pub struct State {
-    pub marker: EmptyState,
+struct State {
+    marker: EmptyState,
 }
 
 let state = State {
@@ -832,7 +775,9 @@ let state = State {
 
 ## Products and existing Rust types
 
-By default, a multi-field enum variant carries one tuple product:
+By default, variants stay exactly as written. With `product_variants`, a
+multi-field tuple-like variant carries one tuple product, and a struct-like
+variant carries a generated payload struct:
 
 <div class="highlight-comparison-key">
   <strong>You write</strong>
@@ -845,51 +790,13 @@ By default, a multi-field enum variant carries one tuple product:
 
 ```rust
 strutuct! {
-    Value
-    Pair(String, u8)
-}
-
-let value = Value!(Pair("answer".to_owned(), 42));
-assert!(matches!(value, Value::Pair((_, 42))));
-```
-
-</div>
-
-<div class="highlight-comparison-pane">
-
-```rust,ignore
-pub enum Value {
-    Pair((String, u8)),
-}
-
-let value = Value::Pair(("answer".to_owned(), 42));
-assert!(matches!(value, Value::Pair((_, 42))));
-```
-
-</div>
-
-</div>
-
-Disable that lowering for a declaration family when ordinary Rust variants are
-more useful:
-
-<div class="highlight-comparison-key">
-  <strong>You write</strong>
-  <strong>Roughly expands to</strong>
-</div>
-
-<div class="highlight-comparison">
-
-<div class="highlight-comparison-pane">
-
-```rust
-strutuct! {
-    #[strutuct(product_variants = false)]
-    Value
-    Pair(String, String)
-    Span { start: usize, end: usize }
     #[strutuct(product_variants = true)]
-    StillPacked(String, String)
+    enum Value {
+        Pair(String, String),
+        Span { start: usize, end: usize },
+        #[strutuct(product_variants = false)]
+        Plain(String, String),
+    }
 }
 ```
 
@@ -898,15 +805,15 @@ strutuct! {
 <div class="highlight-comparison-pane">
 
 ```rust,ignore
-pub struct ValueSpan {
-    pub start: usize,
-    pub end: usize,
+struct ValueSpan {
+    start: usize,
+    end: usize,
 }
 
-pub enum Value {
-    Pair(String, String),
+enum Value {
+    Pair((String, String)),
     Span(ValueSpan),
-    StillPacked((String, String)),
+    Plain(String, String),
 }
 ```
 
@@ -919,8 +826,17 @@ setting for that variant.
 
 ## Configuration and visibility
 
-Every option can be set on the root declaration or locally before one field or
-variant branch:
+Options are ordinary outer attributes, so they go exactly where Rust accepts an
+outer attribute on something `strutuct!` generates:
+
+- before the root declaration;
+- before a named or tuple field;
+- before a variant.
+
+An option applies to the object it is written on and to every declaration
+generated below it, while siblings keep their surrounding configuration. Use
+[`forward_attributes`](forward-attributes.md) to write the root options outside
+the invocation:
 
 <div class="highlight-comparison-key">
   <strong>You write</strong>
@@ -933,11 +849,11 @@ variant branch:
 
 ```rust
 strutuct! {
-    #[strutuct(public = false, reverse_concat = true)]
+    #[strutuct(reverse_concat = true)]
     struct Syntax {
         hidden: enum Hidden { A, B },
-        #[strutuct(public = true)]
-        pub visible: pub enum Visible { A, B },
+        #[strutuct(pub)]
+        visible: enum Visible { A, B },
     }
 }
 ```
@@ -969,12 +885,13 @@ struct Syntax {
 
 The available options are:
 
+- a visibility — `pub`, a restricted `pub(...)`, or `priv` — selects the
+  visibility of that object and of every declaration and field generated below
+  it; without one, everything generated is private, as in ordinary Rust;
 - `inclusions = true | false` generates consuming functions for enum constructor
   paths; it is disabled by default;
-- `product_variants = true | false` selects packed products versus ordinary
-  multi-field enum variants;
-- `public = true | false` selects the default visibility for that declaration
-  branch; `false` restores Rust's ordinary private-by-default behavior;
+- `product_variants = true | false` packs multi-field and struct-like variants
+  into one product payload; it is disabled by default;
 - `reverse_concat = true | false` reverses every automatically concatenated
   name in that branch. For example, `ParentName` becomes `NameParent`, while
   explicit names between `|...|` stay unchanged.
@@ -982,9 +899,84 @@ The available options are:
 These are the complete options currently implemented. More can be added without
 changing the declaration grammar.
 
-An explicit `pub`, restricted `pub(...)`, or `priv` wins for that individual
-declaration or field. Local configuration is inherited by generated declarations
-below that object, while siblings retain their surrounding configuration.
+### Inherited and written visibility
+
+The two visibility positions differ only in reach. Written before a declaration
+or field, a visibility is that object's own and nothing else's. Written as an
+option, it is the default for the whole branch underneath, and any visibility
+written inside that branch wins locally without disturbing what it contains:
+
+<div class="highlight-comparison-key">
+  <strong>You write</strong>
+  <strong>Roughly expands to</strong>
+</div>
+
+<div class="highlight-comparison">
+
+<div class="highlight-comparison-pane">
+
+```rust
+strutuct! {
+    #[strutuct(pub(crate))]
+    struct Request {
+        method: Method { Get, Post },
+        priv secret: Secret {
+            token: String,
+        },
+    }
+}
+```
+
+</div>
+
+<div class="highlight-comparison-pane">
+
+```rust,ignore
+pub(crate) enum RequestMethod {
+    Get,
+    Post,
+}
+
+pub(crate) struct RequestSecret {
+    pub(crate) token: String,
+}
+
+pub(crate) struct Request {
+    pub(crate) method: RequestMethod,
+    secret: RequestSecret,
+}
+```
+
+</div>
+
+</div>
+
+The `priv` before `secret` hides that one field; `RequestSecret` and its `token`
+keep the inherited `pub(crate)`. Writing `priv` before the declaration instead,
+as in `secret: priv Secret { ... }`, hides the generated struct while leaving
+its fields and the field holding it alone.
+
+A type position is not an attribute position in Rust, so options there are
+rejected. Configure the enclosing field or variant instead; an explicit
+visibility on the field keeps the two apart when they should differ:
+
+```rust,compile_fail
+strutuct! {
+    struct Holder {
+        // error: `#[strutuct(...)]` cannot configure a type
+        value: #[strutuct(pub)] enum Choice { A, B },
+    }
+}
+```
+
+```rust
+strutuct! {
+    struct Holder {
+        #[strutuct(pub)]
+        priv value: enum Choice { A, B },
+    }
+}
+```
 
 ## Parsing precedence
 
@@ -1055,14 +1047,14 @@ strutuct! {
 
 ```rust,ignore
 #[derive(Debug, Clone, PartialEq, Eq, Copy, Hash)]
-pub enum TokenKind {
+enum TokenKind {
     String,
     Integer,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Token {
-    pub kind: TokenKind,
+struct Token {
+    kind: TokenKind,
 }
 ```
 
@@ -1087,14 +1079,12 @@ paths that were absent, and propagates the reduced derive list further down:
 
 <div class="highlight-comparison-pane">
 
-```rust,ignore
+```rust
 strutuct! {
-    #[derive(Debug, Clone, PartialEq)]
-    Syntax
-    #[underive(Clone)]
-    node: Node {
-        leaf: Leaf { Text(String) },
-    },
+    #[derive(Debug, Clone, Default)]
+    Settings
+    #[underive(Default)]
+    mode: Mode { Fast, Safe(Level { Low, High }) }?,
 }
 ```
 
@@ -1103,25 +1093,30 @@ strutuct! {
 <div class="highlight-comparison-pane">
 
 ```rust,ignore
-#[derive(Debug, PartialEq)]
-pub enum SyntaxNodeLeaf {
-    Text(String),
+#[derive(Debug, Clone)]
+enum SettingsModeLevel {
+    Low,
+    High,
 }
 
-#[derive(Debug, PartialEq)]
-pub struct SyntaxNode {
-    pub leaf: SyntaxNodeLeaf,
+#[derive(Debug, Clone)]
+enum SettingsMode {
+    Fast,
+    Safe(SettingsModeLevel),
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct Syntax {
-    pub node: SyntaxNode,
+#[derive(Debug, Clone, Default)]
+struct Settings {
+    mode: Option<SettingsMode>,
 }
 ```
 
 </div>
 
 </div>
+
+Neither enum has a natural default variant, and `Option<SettingsMode>` defaults
+to `None` without one, so only `Settings` keeps `Default`.
 
 Put documentation and other root attributes inside the macro, immediately
 before the generated type's name:
@@ -1150,7 +1145,7 @@ strutuct! {
 
 ```rust,ignore
 /// A literal token recognized by the parser.
-pub enum Literal {
+enum Literal {
     String,
     Integer,
 }
@@ -1214,8 +1209,8 @@ constructor occurrence in an enum tree:
 strutuct! {
     #[strutuct(inclusions = true)]
     Token {
-        Operator { Not(String), Plus },
-        Keyword { Not(String) },
+        Operator(Operator { Not(String), Plus }),
+        Keyword(Keyword { Not(String) }),
     }
 }
 
@@ -1231,37 +1226,37 @@ assert!(matches!(
 <div class="highlight-comparison-pane">
 
 ```rust,ignore
-pub enum TokenOperator {
+enum TokenOperator {
     Not(String),
     Plus,
 }
 
-pub enum TokenKeyword {
+enum TokenKeyword {
     Not(String),
 }
 
-pub enum Token {
+enum Token {
     Operator(TokenOperator),
     Keyword(TokenKeyword),
 }
 
-pub fn TokenOperator(value: TokenOperator) -> Token {
+fn TokenOperator(value: TokenOperator) -> Token {
     Token::Operator(value)
 }
 
-pub fn TokenOperatorNot(value: String) -> Token {
+fn TokenOperatorNot(value: String) -> Token {
     Token::Operator(TokenOperator::Not(value))
 }
 
-pub fn TokenOperatorPlus() -> Token {
+fn TokenOperatorPlus() -> Token {
     Token::Operator(TokenOperator::Plus)
 }
 
-pub fn TokenKeyword(value: TokenKeyword) -> Token {
+fn TokenKeyword(value: TokenKeyword) -> Token {
     Token::Keyword(value)
 }
 
-pub fn TokenKeywordNot(value: String) -> Token {
+fn TokenKeywordNot(value: String) -> Token {
     Token::Keyword(TokenKeyword::Not(value))
 }
 ```

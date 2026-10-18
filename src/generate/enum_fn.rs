@@ -6,7 +6,7 @@ use crate::helpers::ungroup;
 use quote::quote;
 use syn::{
     Attribute, Error, Expr, ExprClosure, ExprConst, ExprLit, Fields, Ident, ItemEnum, Lit, LitStr,
-    Member, Pat, PatType, Path, Stmt, Token, Type, Variant,
+    Member, Pat, PatType, Path, Stmt, Token, Type, Variant, Visibility,
     ext::IdentExt,
     parse::{Parse, ParseStream},
     parse_quote_spanned, parse2,
@@ -15,6 +15,8 @@ use syn::{
 
 /// Parsed accessor name and requested output representation.
 struct Arguments {
+    /// Visibility of the generated method.
+    method_visibility: Visibility,
     /// Name of the accessor method generated on the enum.
     method_name: Ident,
     /// Return type before optionality inferred from missing variant arms.
@@ -50,10 +52,11 @@ enum VariantOutput {
 
 /// Parses the `enum_fn` attribute's arguments.
 impl Parse for Arguments {
-    /// Parses a method name, required output type, and optional fallback.
+    /// Parses a method visibility, name, required output type, and optional fallback.
     fn parse(input: ParseStream) -> syn::Result<Self> {
+        let visibility = input.parse()?;
         let method = Ident::parse_any(input)?;
-        input.parse::<Token![:]>()?;
+        input.parse::<Token![->]>()?;
         let output = input.parse()?;
         let missing = if input.parse::<Option<Token![=]>>()?.is_some() {
             input.parse()?
@@ -63,6 +66,7 @@ impl Parse for Arguments {
         input.parse::<Option<Token![,]>>()?;
 
         Ok(Self {
+            method_visibility: visibility,
             method_name: method,
             return_type: output,
             missing,
@@ -88,28 +92,6 @@ impl Parse for MissingDescription {
     }
 }
 
-macro_docs! {
-    /// Generates an enum method from per-variant expressions written beside the variants.
-    ///
-    /// The argument names the method and its return type; the expression after each
-    /// variant becomes that match arm's value.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use these_macros_should_be_illegal::enum_fn;
-    ///
-    /// #[enum_fn(description: &'static str)]
-    /// enum Action {
-    ///     Quit = "quit the application",
-    ///     Submit = "evaluate the input",
-    /// }
-    ///
-    /// const QUIT: &str = Action::Quit.description();
-    /// assert_eq!(QUIT, "quit the application");
-    /// ```
-}
-
 /// Generates an enum method whose body is a match over its variants.
 pub fn enum_fn(arguments: TokenStream, item: TokenStream) -> TokenStream {
     let result = parse2::<Arguments>(arguments)
@@ -122,6 +104,7 @@ pub fn enum_fn(arguments: TokenStream, item: TokenStream) -> TokenStream {
 /// Removes method-arm expressions and emits the accessor implementation.
 fn expand(arguments: Arguments, mut item: ItemEnum) -> syn::Result<TokenStream> {
     let Arguments {
+        method_visibility: visibility,
         method_name: method,
         return_type: output,
         missing,
@@ -230,7 +213,7 @@ fn expand(arguments: Arguments, mut item: ItemEnum) -> syn::Result<TokenStream> 
     let method = if is_const {
         quote! {
             #[doc = #method_documentation]
-            pub const fn #method(&self) -> #return_type {
+            #visibility const fn #method(&self) -> #return_type {
                 match self {
                     #(#arms),*
                 }
@@ -239,7 +222,7 @@ fn expand(arguments: Arguments, mut item: ItemEnum) -> syn::Result<TokenStream> 
     } else {
         quote! {
             #[doc = #method_documentation]
-            pub fn #method(&self) -> #return_type {
+            #visibility fn #method(&self) -> #return_type {
                 match self {
                     #(#arms),*
                 }
@@ -446,7 +429,7 @@ mod tests {
     #[test]
     fn rejects_an_out_of_range_tuple_selector() {
         let output = enum_fn(
-            quote!(value: usize),
+            quote!(value -> usize),
             quote! {
                 enum Value {
                     Pair(usize, usize) = 2,
@@ -463,7 +446,7 @@ mod tests {
     #[test]
     fn rejects_an_unknown_missing_arm_strategy() {
         let output = enum_fn(
-            quote!(value: usize = default),
+            quote!(value -> usize = default),
             quote! {
                 enum Value {
                     Missing,
@@ -479,7 +462,7 @@ mod tests {
     #[test]
     fn rejects_a_non_enum_item() {
         let output = enum_fn(
-            quote!(value: usize),
+            quote!(value -> usize),
             quote! {
                 struct Value(usize);
             },
@@ -487,5 +470,20 @@ mod tests {
         .to_string();
 
         assert!(output.contains("expected `enum`"));
+    }
+
+    /// The written visibility is applied to the method, which is private otherwise.
+    #[test]
+    fn applies_the_method_visibility() {
+        let item = quote! {
+            enum Value {
+                Present = 1,
+            }
+        };
+        let public = enum_fn(quote!(pub(crate) value -> usize), item.clone()).to_string();
+        let private = enum_fn(quote!(value -> usize), item).to_string();
+
+        assert!(public.contains("pub (crate) const fn value"));
+        assert!(private.contains("] const fn value"));
     }
 }

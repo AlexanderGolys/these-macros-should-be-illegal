@@ -1,6 +1,6 @@
 //! Consumer tests for shared match-arm right-hand sides.
 
-use these_macros_should_be_illegal::{excluded_macros, shared_match_arms};
+use these_macros_should_be_illegal::shared_match_arms;
 
 macro_rules! raw_match_syntax {
     ({ A || B => rhs }) => {
@@ -8,8 +8,9 @@ macro_rules! raw_match_syntax {
     };
 }
 
-#[excluded_macros(raw_match_syntax)]
 shared_match_arms! {
+    exclude_macros = (raw_match_syntax);
+
     /// Invokes a macro whose input must remain untouched.
     fn excluded_macro_input() -> &'static str {
         raw_match_syntax!({ A || B => rhs })

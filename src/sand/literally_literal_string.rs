@@ -6,22 +6,7 @@ use syn::{Error, LitStr, parse2};
 
 #[cfg(test)]
 use crate::helpers::preprocessing::ExpansionConfig;
-use crate::helpers::preprocessing::{is_joint_punctuation, is_punctuation, split_config_prefix};
-
-macro_docs! {
-    /// Rewrites literal strings in exactly the supplied token stream.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use these_macros_should_be_illegal::literally_literal_string;
-    /// literally_literal_string! {
-    ///     let literal_string: String = @@"hello";
-    ///     let usual_string: String = "hello".to_string();
-    ///     assert_eq!(literal_string, usual_string);
-    /// }
-    /// ```
-}
+use crate::helpers::preprocessing::{is_joint_punctuation, is_punctuation, split_option_prefix};
 
 /// Rewrites extended literal-string syntax in a procedural macro's input.
 pub fn literally_literal_string(input: TokenStream) -> TokenStream {
@@ -30,7 +15,7 @@ pub fn literally_literal_string(input: TokenStream) -> TokenStream {
 
 /// Removes shared configuration and rewrites all eligible literal-string tokens.
 fn expand(input: TokenStream) -> syn::Result<TokenStream> {
-    let (config, input) = split_config_prefix(input)?;
+    let (config, input) = split_option_prefix(input)?;
     Ok(config.rewrite(input, &literal_string_rewrite))
 }
 
@@ -168,11 +153,11 @@ mod tests {
         assert!(rewrite_all(input).to_string().contains("String :: from"));
     }
 
-    /// Consumes the private configuration envelope before transforming input.
+    /// Consumes the leading option prefix before transforming the remaining input.
     #[test]
-    fn removes_shared_config_before_rewriting() {
+    fn removes_leading_options_before_rewriting() {
         let input = flust(
-            r#"#![__these_macros_should_be_illegal_config(exclude_macros = (anything))]
+            r#"exclude_macros = (anything);
                anything!(@@"untouched") @@"rewritten""#,
         );
         let output = expand(input).unwrap().to_string();
@@ -180,7 +165,7 @@ mod tests {
         expected.extend(quote!(::std::string::String::from("rewritten")));
 
         assert_eq!(output, expected.to_string());
-        assert!(!output.contains("__these_macros_should_be_illegal_config"));
+        assert!(!output.contains("exclude_macros"));
     }
 
     /// Leaves character literals and lifetimes unchanged.

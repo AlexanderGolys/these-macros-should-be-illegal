@@ -16,7 +16,7 @@ strutuct! {
 }
 
 #[forward_attributes]
-#[strutuct(product_variants = false)]
+#[strutuct(product_variants = true)]
 strutuct! {
     ConfiguredThroughAttributes
     Pair(u8, u8)
@@ -38,7 +38,7 @@ fn forwards_attributes_written_outside_the_forwarder() {
 /// Forwarded configuration controls the receiving function-like macro.
 #[test]
 fn forwards_macro_configuration() {
-    let pair = ConfiguredThroughAttributes::Pair(3, 4);
+    let pair = ConfiguredThroughAttributes::Pair((3, 4));
 
-    assert!(matches!(pair, ConfiguredThroughAttributes::Pair(3, 4)));
+    assert!(matches!(pair, ConfiguredThroughAttributes::Pair((3, 4))));
 }

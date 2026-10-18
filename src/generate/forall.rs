@@ -13,63 +13,6 @@ use syn::{
 
 use crate::helpers::ungroup;
 
-macro_docs! {
-    /// Distributes constant outer attributes, visibility or types over all fields or variants.
-    ///
-    /// The arguments are written like the beginning of one member declaration,
-    /// `#[attribute] pub Type`, and are repeated on every member of the annotated
-    /// item: on each field of a struct or union, and on each variant of an enum.
-    /// Each part of the prefix is recognized by the syntax that only it has, so
-    /// the parts may be written in any order. Shared attributes are added in front
-    /// of the ones a member already carries, and a member keeps its own visibility
-    /// where it declares one.
-    ///
-    /// Every item kind takes the part of the prefix its members accept:
-    ///
-    /// - a braced struct and a union take attributes and one visibility, since
-    ///   their fields already name the type they hold;
-    /// - a tuple struct takes attributes, one visibility and one shared type, and
-    ///   then its fields are written as bare names: `struct S(a, b)` becomes a
-    ///   braced struct whose fields `a` and `b` hold that type;
-    /// - an enum takes attributes and either any number of types, appended to its
-    ///   variants as unnamed fields, or one braced group `{ name: Type, ... }` of
-    ///   named fields added to its variants; a variant takes no visibility.
-    ///
-    /// A named field created from the prefix is documented where the declaration
-    /// documents none, which keeps the generated braced struct usable under
-    /// `#![deny(missing_docs)]`.
-    ///
-    /// A prefix forwarded by a declarative macro is read like one written
-    /// directly: `#[forall($(#[$attribute])* $visibility $shared)]` takes its
-    /// parts from `meta`, `vis` and `ty` fragments, including a `vis` fragment
-    /// that matched nothing, and a field name may be forwarded as a `ty` fragment.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use these_macros_should_be_illegal::forall;
-    ///
-    /// #[forall(pub(crate))]
-    /// pub struct Pixel(u8, u8, u8);
-    ///
-    /// #[forall(pub, f32)]
-    /// struct Point(x, y);
-    ///
-    /// #[forall(u16, String)]
-    /// enum Response { Redirect, Error }
-    ///
-    /// #[forall(#[doc = "One stage of the pipeline."])]
-    /// enum Stage { Parse, Lower }
-    ///
-    /// let point = Point { x: 0.25, y: 0.75 };
-    /// let response = Response::Error(404, String::from("missing"));
-    ///
-    /// assert_eq!(point.x + point.y, 1.0);
-    /// assert!(matches!(response, Response::Error(404, _)));
-    /// assert!(matches!(Stage::Lower, Stage::Lower));
-    /// ```
-}
-
 /// Repeats one shared member declaration prefix over every field or variant.
 pub fn forall(arguments: TokenStream, item: TokenStream) -> TokenStream {
     let result = parse2::<MemberPrefix>(arguments)

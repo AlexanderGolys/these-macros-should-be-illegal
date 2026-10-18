@@ -10,7 +10,7 @@ use syn::{
 
 #[cfg(test)]
 use crate::helpers::preprocessing::ExpansionConfig;
-use crate::helpers::preprocessing::split_config_prefix;
+use crate::helpers::preprocessing::split_option_prefix;
 
 use TokenTree::Group as GroupTT;
 
@@ -122,31 +122,6 @@ impl Parse for ArmPrefix {
     }
 }
 
-macro_docs! {
-    /// Clones a shared match-arm RHS for alternatives separated by `||`.
-    ///
-    /// Parenthesize `(pattern if guard)` when one alternative has its own guard.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use these_macros_should_be_illegal::shared_match_arms;
-    /// enum Value {
-    ///     Number(u32),
-    ///     Character(char),
-    /// }
-    ///
-    /// let value = Value::Number(3);
-    /// let text = shared_match_arms! {
-    ///     match value {
-    ///         Value::Number(value) || Value::Character(value) => value.to_string(),
-    ///     }
-    /// };
-    ///
-    /// assert_eq!(text, "3");
-    /// ```
-}
-
 /// Rewrites shared match-arm alternatives throughout a procedural macro input.
 pub fn shared_match_arms(input: TokenStream) -> TokenStream {
     expand(input).unwrap_or_else(Error::into_compile_error)
@@ -154,7 +129,7 @@ pub fn shared_match_arms(input: TokenStream) -> TokenStream {
 
 /// Removes shared configuration and rewrites candidate arm groups bottom-up.
 fn expand(input: TokenStream) -> syn::Result<TokenStream> {
-    let (config, input) = split_config_prefix(input)?;
+    let (config, input) = split_option_prefix(input)?;
     Ok(config.rewrite_bottom_up(input, &shared_arm_group_rewrite))
 }
 

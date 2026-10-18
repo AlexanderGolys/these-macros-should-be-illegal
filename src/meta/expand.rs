@@ -15,7 +15,7 @@ use TokenTree::{Group as GroupTT, Ident as IdentTT, Punct as PunctTT};
 
 use super::reflect::invoke;
 
-use crate::helpers::preprocessing::{ExpansionConfig, parse_config_option, split_config_prefix};
+use crate::helpers::preprocessing::{ExpansionConfig, parse_config_option};
 use crate::helpers::ungroup;
 
 /// Macro paths and shared options supplied before the module declaration.
@@ -86,32 +86,6 @@ impl Parse for Invocation {
     }
 }
 
-macro_docs! {
-    /// Loads an out-of-line module and injects function-like macros around its body.
-    ///
-    /// The module file is found as for an ordinary `mod` declaration, or through a
-    /// `#[path]` attribute, and may contain syntax that only the injected macros
-    /// accept. Here it uses `@@"..."` owned string literals:
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use these_macros_should_be_illegal::expand;
-    ///
-    /// // The macro runs inside the generated module, so name it by full path.
-    /// expand!(
-    ///     these_macros_should_be_illegal::literally_literal_string;
-    ///     #[path = "../tests/fixtures/literally_literal_string_module.rs"]
-    ///     mod experiments;
-    /// );
-    ///
-    /// fn main() {
-    ///     let owned: String = experiments::owned_string();
-    ///     assert_eq!(owned, "loaded outside Rust");
-    /// }
-    /// ```
-}
-
 /// Loads an out-of-line module and injects the requested function-like macros.
 pub fn expand(input: TokenStream) -> TokenStream {
     let invocation_file = input
@@ -125,10 +99,7 @@ pub fn expand(input: TokenStream) -> TokenStream {
 
 /// Loads a module body and nests it in the configured function-like macro invocations.
 fn inject(input: TokenStream, invocation_file: Option<PathBuf>) -> syn::Result<TokenStream> {
-    let (config, input) = split_config_prefix(input)?;
-    let mut invocation = parse2::<Invocation>(input)?;
-    invocation.arguments.config.merge(config);
-    let Invocation { arguments, module } = invocation;
+    let Invocation { arguments, module } = parse2::<Invocation>(input)?;
 
     if module.content.is_some() {
         return Err(Error::new_spanned(

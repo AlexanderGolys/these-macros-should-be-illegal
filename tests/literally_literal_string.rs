@@ -1,6 +1,6 @@
 //! Consumer tests for literal-string rewriting and preprocessing exclusions.
 
-use these_macros_should_be_illegal::{excluded_macros, literally_literal_string};
+use these_macros_should_be_illegal::literally_literal_string;
 
 macro_rules! raw_tokens {
     ($($tokens:tt)*) => {
@@ -8,8 +8,9 @@ macro_rules! raw_tokens {
     };
 }
 
-#[excluded_macros(raw_tokens)]
 literally_literal_string! {
+    exclude_macros = (raw_tokens);
+
     fn configured_macro_arguments_are_opaque() -> &'static str {
         raw_tokens!(@@"untouched")
     }

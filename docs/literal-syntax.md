@@ -1,6 +1,6 @@
 # Literal syntax and external modules
 
-API reference on docs.rs: [`literally_literal_string!`](https://docs.rs/these-macros-should-be-illegal/latest/these_macros_should_be_illegal/macro.literally_literal_string.html), [`expand!`](https://docs.rs/these-macros-should-be-illegal/latest/these_macros_should_be_illegal/macro.expand.html), [`excluded_macros`](https://docs.rs/these-macros-should-be-illegal/latest/these_macros_should_be_illegal/attr.excluded_macros.html).
+API reference on docs.rs: [`literally_literal_string!`](https://docs.rs/these-macros-should-be-illegal/latest/these_macros_should_be_illegal/macro.literally_literal_string.html), [`expand!`](https://docs.rs/these-macros-should-be-illegal/latest/these_macros_should_be_illegal/macro.expand.html).
 
 ## `literally_literal_string!`
 
@@ -128,5 +128,14 @@ mod experiments {
 
 </div>
 
-The `excluded_macros` attribute provides the same configuration when wrapping
-a configuration-aware item-position transformation.
+A whole-stream macro invoked directly takes the same option as the first thing
+in its input, ended by a semicolon:
+
+```rust,ignore
+literally_literal_string! {
+    exclude_macros = (raw_tokens);
+
+    raw_tokens!(@@"untouched");
+    let text = @@"rewritten";
+}
+```

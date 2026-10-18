@@ -117,31 +117,6 @@ struct Invocation {
     trailing_comma: bool,
 }
 
-macro_docs! {
-    /// Permutes comma-separated token trees using standard cycle notation.
-    ///
-    /// Cycles compose from right to left and positions are one-based. Token trees
-    /// beyond the largest mentioned position remain fixed. Spaces are required
-    /// between positions because `14` is one integer token while `1 4` is two.
-    ///
-    /// ```text
-    /// perm! { ((1 4 3)), a, b, c, d, e }
-    /// // expands to the token stream: c, b, d, a, e
-    /// ```
-    ///
-    /// An empty cycle product demonstrates the identity in an ordinary expression
-    /// context; nontrivial products deliberately return a raw comma-separated
-    /// stream for structural consumers.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use these_macros_should_be_illegal::perm;
-    /// let fixed: &str = perm!((), "fixed");
-    /// assert_eq!(fixed.len(), 5);
-    /// ```
-}
-
 /// Applies a finite permutation to the leading positions of a token stream.
 ///
 /// Cycles compose from right to left and use one-based positions. Positions

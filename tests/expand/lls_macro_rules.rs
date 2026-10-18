@@ -1,9 +1,10 @@
 #![no_main]
 
-use these_macros_should_be_illegal::{excluded_macros, literally_literal_string};
+use these_macros_should_be_illegal::literally_literal_string;
 
-#[excluded_macros(macro_excluded, macro_rules)]
 literally_literal_string!(
+    exclude_macros = (macro_excluded, macro_rules);
+
     macro_rules! macro_excluded {
         (@@ "a") => { "a was a not string" };
         (@@$s:literal) => { "not a string" };

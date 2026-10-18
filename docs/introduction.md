@@ -27,6 +27,9 @@ use these_macros_should_be_illegal::{
   expressions.
 - [`forall`](forall.md) distributes one constant visibility, type, attribute or
   group of named fields over all fields or variants of an item.
+- [`Log`](log.md) reads a struct as a product over its field names, deriving
+  the enum `E` of those names and, where the fields share one type `X`, the
+  indexing operator evaluating one of them on a value.
 - [`callable` and `make_fn!`](callable.md) give a local object function-like
   syntax without erasing its type or its ordinary methods.
 - [`strutuct!`](strutuct.md), with `emmun!` as an exact alias, declares a small

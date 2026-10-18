@@ -122,9 +122,10 @@ Logical OR remains ordinary Rust when it occurs inside a component guard:
 ## Whole-stream rewriting
 
 Like `literally_literal_string!`, this macro accepts an arbitrary token stream
-and searches recursively through its groups. Attributes stay opaque, and
-`excluded_macros` can protect macro inputs with private syntax. It can also be
-listed in `expand!` when the extended syntax lives in an out-of-line module.
+and searches recursively through its groups. Attributes stay opaque, and a
+leading `exclude_macros = (names);` option protects macro inputs with private
+syntax. It can also be listed in `expand!` when the extended syntax lives in an
+out-of-line module.
 
 This is deliberately a function-like macro. An attribute macro would require
 rustc to accept the surrounding item before this expression-level extension

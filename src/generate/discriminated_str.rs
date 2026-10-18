@@ -23,31 +23,6 @@ struct Discriminant {
     fields: Fields,
 }
 
-macro_docs! {
-    /// Assigns every enum variant one unique string literal.
-    ///
-    /// The named method maps a value to its literal, and a same-name macro maps a
-    /// literal and payload back to the variant constructor.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use these_macros_should_be_illegal::discriminated_str;
-    ///
-    /// #[discriminated_str(name)]
-    /// enum Token {
-    ///     Ident(String) = "ident",
-    ///     End = "end",
-    /// }
-    ///
-    /// fn main() {
-    ///     let token = Token!("ident", String::from("value"));
-    ///     assert_eq!(token.name(), "ident");
-    ///     assert!(matches!(Token!("end"), Token::End));
-    /// }
-    /// ```
-}
-
 /// Generates unique string discriminants and a same-name constructor macro.
 pub fn discriminated_str(arguments: TokenStream, item: TokenStream) -> TokenStream {
     let result = parse2::<MethodName>(arguments)
@@ -287,8 +262,16 @@ mod tests {
     /// Attributes on the literal itself are rejected rather than silently dropped.
     #[test]
     fn rejects_attributes_on_the_discriminant() {
-        let output = discriminated_str(quote!(name), quote!(enum E { A = #[cfg(any())] "a" }))
-            .to_string();
+        let output = discriminated_str(
+            quote!(name),
+            quote!(
+                enum E {
+                    A = #[cfg(any())]
+                    "a",
+                }
+            ),
+        )
+        .to_string();
 
         assert!(output.contains("put them on the variant"), "{output}");
     }

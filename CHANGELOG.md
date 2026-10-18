@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- `#[enum_fn]` takes the method signature as `vis name -> Type`, so the return
+  type no longer reads as the type of the name, and applies the written
+  visibility to the method, which is private without one.
+- The whole-stream macros `literally_literal_string!` and `shared_match_arms!`
+  take their exclusions as the first thing in their own input, ended by a
+  semicolon, as `expand!` already did:
+  `literally_literal_string! { exclude_macros = (raw_tokens); ... }`.
+
+### Removed
+
+- The `#[excluded_macros]` attribute, whose only purpose was to carry that one
+  option into the invocation it wrapped.
+- `strutuct!` no longer accepts and discards the shared exclusion option, which
+  its lowering never read.
+
 ## 0.10.0 - 2026-10-14
 
 ### Added

@@ -1,5 +1,5 @@
 #![no_main]
-use these_macros_should_be_illegal::{excluded_macros, literally_literal_string};
+use these_macros_should_be_illegal::literally_literal_string;
 pub fn owned_string() -> String {
     ::std::string::String::from("not literally literal, but a string" );
     ::std::string::String::from("not literally literal, but a string" );

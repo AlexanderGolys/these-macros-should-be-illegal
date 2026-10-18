@@ -3,7 +3,7 @@
 use proc_macro2::{Delimiter, Group, Spacing, TokenStream, TokenTree};
 use quote::{ToTokens, format_ident, quote};
 use syn::{
-    Attribute, Ident, ItemMacro, Token,
+    Error, Ident, ItemMacro, Token,
     meta::ParseNestedMeta,
     parse::{Parse, ParseStream, Parser},
     parse2,
@@ -15,29 +15,18 @@ use super::arguments::reject_macro_call;
 use Delimiter::Bracket;
 use TokenTree::{Group as GroupTT, Ident as IdentTT, Punct as PunctTT};
 
-/// The private inner attribute used to pass preprocessing configuration between macros.
-const CONFIG_ATTRIBUTE: &str = "__these_macros_should_be_illegal_config";
-
 /// Option naming macros whose invocation inputs stay opaque: `exclude_macros = (a, b)`.
 const EXCLUDE_MACROS_OPTION: &str = "exclude_macros";
 
 /// Macro names whose invocation inputs must remain opaque during preprocessing.
 #[derive(Clone, Default)]
-pub(crate) struct ExcludedMacros(
+struct ExcludedMacros(
     /// Exact, possibly raw, macro identifiers to skip.
     Vec<Ident>,
 );
 
-/// Shared options carried through a chain of syntax-rewriting macros.
-#[derive(Clone, Default)]
-pub(crate) struct ExpansionConfig {
-    /// Macro invocations excluded from recursive rewriting.
-    excluded_macros: ExcludedMacros,
-}
-
 /// Parses excluded macro names from shared configuration syntax.
 impl Parse for ExcludedMacros {
-    /// Parses a comma-separated list of macro identifiers.
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let names = Punctuated::<Ident, Token![,]>::parse_terminated_with(input, |input| {
             reject_macro_call(input, "a macro name")?;
@@ -45,6 +34,13 @@ impl Parse for ExcludedMacros {
         })?;
         Ok(Self(names.into_iter().collect()))
     }
+}
+
+/// Shared options carried through a chain of syntax-rewriting macros.
+#[derive(Clone, Default)]
+pub(crate) struct ExpansionConfig {
+    /// Macro invocations excluded from recursive rewriting.
+    excluded_macros: ExcludedMacros,
 }
 
 /// Parses the complete shared preprocessing configuration.
@@ -61,13 +57,8 @@ impl Parse for ExpansionConfig {
     }
 }
 
-/// Provides construction, merging, serialization, and recursive traversal operations.
+/// Provides serialization and recursive traversal operations.
 impl ExpansionConfig {
-    /// Creates a configuration containing the supplied excluded macro names.
-    pub(crate) fn excluding(excluded_macros: ExcludedMacros) -> Self {
-        Self { excluded_macros }
-    }
-
     /// Reports whether a macro identifier is excluded exactly, including rawness.
     pub(crate) fn is_excluded(&self, identifier: &Ident) -> bool {
         self.excluded_macros
@@ -79,15 +70,6 @@ impl ExpansionConfig {
     /// Reports whether the configuration carries no options.
     fn is_empty(&self) -> bool {
         self.excluded_macros.0.is_empty()
-    }
-
-    /// Adds options from another envelope without duplicating macro identifiers.
-    pub(crate) fn merge(&mut self, other: Self) {
-        for identifier in other.excluded_macros.0 {
-            if !self.is_excluded(&identifier) {
-                self.excluded_macros.0.push(identifier);
-            }
-        }
     }
 
     /// Recursively applies a token transform while preserving opaque token regions.
@@ -166,16 +148,16 @@ impl ExpansionConfig {
         output
     }
 
-    /// Prefixes a macro input with this configuration's private inner attribute.
+    /// Prefixes a macro input with the options spelling this configuration.
     pub(crate) fn configure_input(&self, input: TokenStream) -> TokenStream {
         if self.is_empty() {
             return input;
         }
 
-        let attribute = format_ident!("{CONFIG_ATTRIBUTE}");
+        let option = format_ident!("{EXCLUDE_MACROS_OPTION}");
         let excluded = &self.excluded_macros.0;
         quote! {
-            #![#attribute(exclude_macros = (#(#excluded),*))]
+            #option = (#(#excluded),*);
             #input
         }
     }
@@ -258,28 +240,39 @@ pub(crate) fn parse_config_option(
     Ok(())
 }
 
-/// Removes and parses a leading private configuration attribute, when present.
-pub(crate) fn split_config_prefix(
+/// Removes and parses the leading options of a rewriting macro's input, when present.
+///
+/// The options are written as the arguments of [`expand!`](crate::expand) are,
+/// `exclude_macros = (name, ...);`, and end at the first semicolon.
+pub(crate) fn split_option_prefix(
     input: TokenStream,
 ) -> syn::Result<(ExpansionConfig, TokenStream)> {
     let tokens: Vec<_> = input.into_iter().collect();
-    // The private attribute is exactly `#`, `!` and one bracketed group.
-    let prefix = tokens.iter().take(3).cloned().collect();
-    let Some(attribute) = Attribute::parse_inner
-        .parse2(prefix)
-        .ok()
-        .and_then(|attributes| attributes.into_iter().next())
-        .filter(|attribute| attribute.path().is_ident(CONFIG_ATTRIBUTE))
-    else {
+    if !starts_with_option(&tokens) {
         return Ok((ExpansionConfig::default(), tokens.into_iter().collect()));
-    };
+    }
 
-    let mut config = ExpansionConfig::default();
-    let mut has_excluded_macros = false;
-    attribute.parse_nested_meta(|option| {
-        parse_config_option(option, &mut config, &mut has_excluded_macros)
-    })?;
-    Ok((config, tokens.into_iter().skip(3).collect()))
+    let end = tokens
+        .iter()
+        .position(|token| is_punctuation(token, ';'))
+        .ok_or_else(|| {
+            Error::new(
+                tokens[0].span(),
+                format!("expected `;` after the `{EXCLUDE_MACROS_OPTION}` option"),
+            )
+        })?;
+    let options = tokens[..end].iter().cloned().collect();
+
+    Ok((
+        parse2(options)?,
+        tokens[end + 1..].iter().cloned().collect(),
+    ))
+}
+
+/// Reports whether a token prefix spells one of the shared named options.
+fn starts_with_option(tokens: &[TokenTree]) -> bool {
+    matches!(tokens.first(), Some(IdentTT(name)) if name == EXCLUDE_MACROS_OPTION)
+        && matches!(tokens.get(1), Some(token) if is_punctuation(token, '='))
 }
 
 /// Reports whether a token is punctuation with the requested character.
@@ -347,6 +340,66 @@ mod tests {
         assert!(config.is_excluded(&first));
         assert!(config.is_excluded(&second));
         assert!(!config.is_excluded(&other));
+    }
+
+    /// A leading option prefix is consumed and the remaining stream left untouched.
+    #[test]
+    fn splits_the_leading_option_prefix() {
+        let input: TokenStream = "exclude_macros = (first, second); fn body() {}"
+            .parse()
+            .unwrap();
+        let (config, rest) = split_option_prefix(input).unwrap();
+
+        assert!(config.is_excluded(&syn::parse_quote!(second)));
+        assert_eq!(
+            rest.to_string(),
+            quote!(
+                fn body() {}
+            )
+            .to_string()
+        );
+    }
+
+    /// Input that does not begin with an option is returned in full.
+    #[test]
+    fn keeps_input_without_an_option_prefix() {
+        let input: TokenStream = "exclude_macros; fn body() {}".parse().unwrap();
+        let original = input.to_string();
+        let (config, rest) = split_option_prefix(input).unwrap();
+
+        assert!(config.is_empty());
+        assert_eq!(rest.to_string(), original);
+    }
+
+    /// An option prefix without its terminating semicolon is rejected.
+    #[test]
+    fn rejects_unterminated_options() {
+        let input: TokenStream = "exclude_macros = (first)".parse().unwrap();
+        let error = split_option_prefix(input)
+            .err()
+            .map(|error| error.to_string())
+            .unwrap_or_default();
+
+        assert!(error.contains("expected `;`"));
+    }
+
+    /// A configured input is read back as the configuration that wrote it.
+    #[test]
+    fn configured_input_round_trips() {
+        let config: ExpansionConfig = syn::parse_str("exclude_macros = (first)").unwrap();
+        let input = config.configure_input(quote!(
+            fn body() {}
+        ));
+        let (restored, rest) = split_option_prefix(input).unwrap();
+
+        assert!(restored.is_excluded(&syn::parse_quote!(first)));
+        assert_eq!(
+            rest.to_string(),
+            quote!(
+                fn body() {}
+            )
+            .to_string()
+        );
     }
 
     /// Keeps raw identifiers distinct while matching exact raw macro names.

@@ -1,9 +1,9 @@
 //! Generates one method from expressions attached directly to enum variants.
 
-use these_macros_should_be_illegal::enum_fn;
+use these_macros_should_be_illegal::{enum_fn, strutuct};
 
 /// Command labels generated from constant, computed, and missing arms.
-#[enum_fn(label: String)]
+#[enum_fn(label -> String)]
 enum Command<'a> {
     /// A fixed owned label.
     Quit = String::from("quit"),

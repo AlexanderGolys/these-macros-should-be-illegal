@@ -12,35 +12,6 @@ use crate::helpers::arguments::MethodName;
 /// Method name reserved as the structural calling convention.
 pub(crate) const CALL_METHOD: &str = "__priv_tmsbi_call";
 
-macro_docs! {
-    /// Gives one trait method a structural alias that [`make_fn!`](make_fn) calls through.
-    ///
-    /// No shared callable trait is imposed: the attribute only marks which method of
-    /// a user-owned trait the generated same-name macro forwards its arguments to.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use these_macros_should_be_illegal::{callable, make_fn};
-    ///
-    /// #[callable(apply)]
-    /// trait Action {
-    ///     fn apply(&self, point: usize) -> usize;
-    /// }
-    ///
-    /// struct Shift(usize);
-    ///
-    /// impl Action for Shift {
-    ///     fn apply(&self, point: usize) -> usize {
-    ///         point + self.0
-    ///     }
-    /// }
-    ///
-    /// make_fn!(sigma = Shift(3));
-    /// assert_eq!(sigma!(2), 5);
-    /// ```
-}
-
 /// Adds a hidden structural-call alias to one method of a trait.
 pub fn callable(arguments: TokenStream, item: TokenStream) -> TokenStream {
     let result = parse2::<MethodName>(arguments)
@@ -51,7 +22,10 @@ pub fn callable(arguments: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 /// Appends the selected method's hidden forwarding alias to the trait.
-fn expand_callable(MethodName(method_name): MethodName, mut item: ItemTrait) -> syn::Result<TokenStream> {
+fn expand_callable(
+    MethodName(method_name): MethodName,
+    mut item: ItemTrait,
+) -> syn::Result<TokenStream> {
     let call_name = Ident::new(CALL_METHOD, method_name.span());
     if let Some(span) = item.items.iter().find_map(|item| match item {
         TraitItem::Const(constant) if constant.ident == call_name => Some(constant.ident.span()),

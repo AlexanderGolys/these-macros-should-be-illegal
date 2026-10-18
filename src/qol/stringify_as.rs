@@ -111,30 +111,6 @@ impl Parse for Invocation {
     }
 }
 
-macro_docs! {
-    /// Spells one name in a conventional case, or one type canonically, as a string literal.
-    ///
-    /// The option before `;` selects the spelling: `camel`, `pascal`, `snake`, `kebab`,
-    /// `screaming_snake`, `lower` or `upper` convert an identifier or string literal,
-    /// respecting acronym boundaries; `lower` and `upper` retain existing separators.
-    /// `type` produces a canonical, collision-safe name for one Rust type: it begins
-    /// with `type:`, which is deliberately illegal in Rust identifiers, and drops
-    /// formatting while preserving structure, so `& 'a mut Vec < Option < T > >`
-    /// becomes `"type:&'a mut Vec<Option<T>>"`.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use these_macros_should_be_illegal::stringify_as;
-    /// assert_eq!(stringify_as!(camel; some_HTTP_server), "someHttpServer");
-    /// assert_eq!(stringify_as!(screaming_snake; SomeHTTPServer), "SOME_HTTP_SERVER");
-    /// assert_eq!(
-    ///     stringify_as!(type; fn((u8, u16), *const [u8; 4]) -> bool),
-    ///     "type:fn((u8,u16),*const[u8;4])->bool",
-    /// );
-    /// ```
-}
-
 /// Spells a name in the selected case or a type canonically: `stringify_as!(snake; Name)`.
 pub fn stringify_as(input: TokenStream) -> TokenStream {
     match parse2::<Invocation>(input) {
@@ -302,7 +278,10 @@ mod tests {
         assert_eq!(Case::Pascal.convert("some_HTTP_server"), "SomeHttpServer");
         assert_eq!(Case::Snake.convert("SomeHTTPServer"), "some_http_server");
         assert_eq!(Case::Kebab.convert("SomeHTTPServer"), "some-http-server");
-        assert_eq!(Case::ScreamingSnake.convert("SomeHTTPServer"), "SOME_HTTP_SERVER");
+        assert_eq!(
+            Case::ScreamingSnake.convert("SomeHTTPServer"),
+            "SOME_HTTP_SERVER"
+        );
         assert_eq!(Case::Lower.convert("Some_Name"), "some_name");
         assert_eq!(Case::Upper.convert("Some_Name"), "SOME_NAME");
     }

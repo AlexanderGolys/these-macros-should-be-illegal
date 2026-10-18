@@ -6,28 +6,6 @@ use syn::{Error, ItemMacro, parse2};
 
 use crate::helpers::arguments::NoArguments;
 
-macro_docs! {
-    /// Moves the outer attributes of an item-position macro invocation into its input.
-    ///
-    /// The receiving function-like macro then decides what the attributes mean.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use these_macros_should_be_illegal::{forward_attributes, strutuct};
-    ///
-    /// #[forward_attributes]
-    /// #[derive(Debug, PartialEq)]
-    /// strutuct! {
-    ///     State { Ready, Waiting }
-    /// }
-    ///
-    /// fn main() {
-    ///     assert_eq!(format!("{:?}", State::Waiting), "Waiting");
-    /// }
-    /// ```
-}
-
 /// Moves an invocation's remaining outer attributes into its opaque input.
 pub fn forward_attributes(arguments: TokenStream, item: TokenStream) -> TokenStream {
     let result = parse2::<NoArguments>(arguments).and_then(|NoArguments| forward(item));

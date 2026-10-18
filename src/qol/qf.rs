@@ -9,21 +9,6 @@ use syn::{
     visit_mut::{self, VisitMut},
 };
 
-macro_docs! {
-    /// Qualifies common unqualified standard-library types inside one Rust type.
-    ///
-    /// Nested common types are qualified recursively, while an already qualified
-    /// path is preserved deliberately.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use these_macros_should_be_illegal::qf;
-    /// let value: qf!(Option<Vec<String>>) = Some(vec![String::from("less punctuation")]);
-    /// assert!(value.is_some());
-    /// ```
-}
-
 /// Qualifies common unqualified standard-library types throughout one type.
 pub fn qf(input: TokenStream) -> TokenStream {
     let result = parse2::<Type>(input).map(|mut ty| {

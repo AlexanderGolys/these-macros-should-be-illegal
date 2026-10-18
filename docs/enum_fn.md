@@ -4,7 +4,8 @@ API reference on docs.rs: [`enum_fn`](https://docs.rs/these-macros-should-be-ill
 
 Generates an enum method as an inline match expression.
 
-The attribute argument names the generated method and gives its return type.
+The attribute argument is the generated method's signature, `vis name -> Type`.
+Without a visibility the method is private, as in ordinary Rust.
 An expression after a variant becomes that match arm's value:
 
 <div class="highlight-comparison-key">
@@ -17,7 +18,7 @@ An expression after a variant becomes that match arm's value:
 <div class="highlight-comparison-pane">
 
 ```rust
-#[enum_fn(description: &'static str)]
+#[enum_fn(description -> &'static str)]
 enum Action {
     Quit = "quit the application",
     Submit = "evaluate the input",
@@ -70,7 +71,7 @@ selected expression is a shared field binding:
 <div class="highlight-comparison-pane">
 
 ```rust
-#[enum_fn(description: &str)]
+#[enum_fn(description -> &str)]
 enum Message<'a> {
     Fixed = "fixed text",
     Owned(String) = 0,
@@ -134,7 +135,7 @@ including zero, is supported. Rust checks its arity, body, and return type:
 <div class="highlight-comparison-pane">
 
 ```rust
-#[enum_fn(description: String)]
+#[enum_fn(description -> String)]
 enum Message {
     Pair(String, String) = |left, right| format!("{left}: {right}"),
     Unit = || String::from("unit"),
@@ -195,7 +196,7 @@ a `const fn`:
 <div class="highlight-comparison-pane">
 
 ```rust
-#[enum_fn(description: &'static str)]
+#[enum_fn(description -> &'static str)]
 enum Status {
     Ready = "ready",
     Unknown,
@@ -248,7 +249,7 @@ instead:
 <div class="highlight-comparison-pane">
 
 ```rust
-#[enum_fn(description: &'static str = stringify)]
+#[enum_fn(description -> &'static str = stringify)]
 enum Status {
     Ready = "ready",
     Unknown,
@@ -296,7 +297,7 @@ the declared return type, and the missing arms panic with the variant's name:
 <div class="highlight-comparison-pane">
 
 ```rust
-#[enum_fn(description: &'static str = panic)]
+#[enum_fn(description -> &'static str = panic)]
 enum Status {
     Ready = "ready",
     Unknown,
@@ -341,7 +342,7 @@ retained. Conditional attributes are copied to the corresponding generated
 match arms so the enum and method stay exhaustive under the same configuration.
 
 ```rust
-#[enum_fn(size: usize)]
+#[enum_fn(size -> usize)]
 pub(crate) enum Value<'a, T: AsRef<str>, const N: usize>
 where
     T: core::fmt::Debug,
@@ -383,7 +384,7 @@ inferred independently from the declared return type:
 <div class="highlight-comparison-pane">
 
 ```rust
-#[enum_fn(description: String)]
+#[enum_fn(description -> String)]
 enum Error {
     Message(String) = |message| (*message).clone(),
     Missing,

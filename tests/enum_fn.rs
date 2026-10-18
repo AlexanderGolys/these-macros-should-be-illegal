@@ -31,7 +31,7 @@ mod some_other_path {
     pub struct String;
 }
 
-#[enum_fn(description: &'static str)]
+#[enum_fn(description -> &'static str)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Action {
     Quit = "quit spectral-m2",
@@ -58,26 +58,26 @@ enum Action {
     InsertTab = "insert a tab",
 }
 
-#[enum_fn(label: string::String)]
+#[enum_fn(label -> string::String)]
 enum OwnedLabel {
     Value = String::from("owned"),
     Dynamic(string::String) = |value| (*value).clone(),
 }
 
-#[enum_fn(label: &str)]
+#[enum_fn(label -> &str)]
 enum BorrowedLabel {
     Value = "borrowed",
     Dynamic(String) = 0,
 }
 
-#[enum_fn(description: &str)]
+#[enum_fn(description -> &str)]
 enum MixedDescription {
     Tuple(u16) = "tuple payload",
     Struct { code: u8 } = "struct payload",
     Dynamic(String) = 0,
 }
 
-#[enum_fn(description: &str)]
+#[enum_fn(description -> &str)]
 enum SelectedDescription<'a> {
     Tuple(String, String) = 1,
     NestedTuple((String, String)) = 1,
@@ -87,7 +87,7 @@ enum SelectedDescription<'a> {
     BorrowedStruct { code: u8, text: &'a str } = text,
 }
 
-#[enum_fn(description: &str)]
+#[enum_fn(description -> &str)]
 enum ClosureDescription<'a> {
     Longer(&'a str, &'a str) = |left, right| {
         if left.len() >= right.len() {
@@ -104,32 +104,32 @@ enum ClosureDescription<'a> {
 }
 
 /// Explicitly const closures keep the generated method const-callable.
-#[enum_fn(description: &str)]
+#[enum_fn(description -> &str)]
 enum ConstClosureDescription<'a> {
     Selected(&'a str, &'a str) = const { |_, selected| *selected },
     Unit = const { || "unit" },
 }
 
-#[enum_fn(description: String)]
+#[enum_fn(description -> String)]
 enum OwnedClosureDescription {
     Joined(String, String) = |left, right| format!("{left}:{right}"),
 }
 
 /// A deliberately non-string result proving the generated method is generic.
-#[enum_fn(weight: usize)]
+#[enum_fn(weight -> usize)]
 enum Weighted {
     Fixed = 3,
     Sum(usize, usize) = |left, right| *left + *right,
 }
 
-#[enum_fn(description: &str)]
+#[enum_fn(description -> &str)]
 enum LifetimeDescription<'a, 'b, 'c> {
     A(&'a str) = 0,
     B(&'b str) = 0,
     C(&'c str) = "a",
 }
 
-#[enum_fn(description: &str)]
+#[enum_fn(description -> &str)]
 enum OptionalDescription<'a> {
     Fixed = "fixed",
     Dynamic(String) = 0,
@@ -140,45 +140,45 @@ enum OptionalDescription<'a> {
 }
 
 /// Descriptions that are either compile-time constants or absent.
-#[enum_fn(description: &'static str)]
+#[enum_fn(description -> &'static str)]
 enum OptionalFixedDescription {
     Fixed = "fixed",
     Missing,
 }
 
 /// An explicitly borrowed fixed accessor remains usable in constants.
-#[enum_fn(description: &str)]
+#[enum_fn(description -> &str)]
 enum ExplicitBorrowedFixedDescription {
     Fixed = "fixed",
 }
 
-#[enum_fn(description: &str)]
+#[enum_fn(description -> &str)]
 enum DeliberatelyDistinctString {
     Value(some_other_path::String),
 }
 
-#[enum_fn(description: String)]
+#[enum_fn(description -> String)]
 enum OptionalOwnedDescription {
     Fixed = String::from("owned fixed"),
     Dynamic(String) = |value| (*value).clone(),
     Missing,
 }
 
-#[enum_fn(description: &'static str = stringify)]
+#[enum_fn(description -> &'static str = stringify)]
 enum StringifiedDescription {
     Fixed = "fixed override",
     Missing,
     Payload(u8),
 }
 
-#[enum_fn(description: &'static str = panic)]
+#[enum_fn(description -> &'static str = panic)]
 enum PanickingDescription {
     Missing,
 }
 
 /// Generic enum shape covering ordinary Rust field types and where clauses.
 #[allow(dead_code)]
-#[enum_fn(score: usize)]
+#[enum_fn(score -> usize)]
 pub(crate) enum GenericShapes<'a, T: AsRef<str>, const N: usize>
 where
     T: core::fmt::Debug,
@@ -192,7 +192,7 @@ where
 }
 
 /// Conditional attributes are forwarded to their generated match arms.
-#[enum_fn(score: usize)]
+#[enum_fn(score -> usize)]
 enum ConditionalVariant {
     #[cfg(any())]
     Removed = 0,
@@ -200,7 +200,7 @@ enum ConditionalVariant {
 }
 
 /// Const, static, and block expressions remain ordinary Rust expressions.
-#[enum_fn(score: usize)]
+#[enum_fn(score -> usize)]
 enum ExpressionShapes {
     Constant = CONST_SCORE,
     Static = STATIC_SCORE,
@@ -480,7 +480,7 @@ fn supports_conditional_and_ordinary_rust_expressions() {
 /// The enum and generated inherent implementation may both be block-local.
 #[test]
 fn expands_on_block_local_items() {
-    #[enum_fn(value: usize)]
+    #[enum_fn(value -> usize)]
     enum LocalValue {
         Present = 3,
     }

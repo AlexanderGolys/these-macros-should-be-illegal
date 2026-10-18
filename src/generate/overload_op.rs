@@ -6,9 +6,8 @@ use crate::helpers::ungroup;
 use proc_macro2::{TokenStream, TokenTree};
 use quote::{format_ident, quote};
 use syn::{
-    Attribute, BoundLifetimes, Error, GenericArgument, GenericParam, Generics, Ident,
-    ImplItem, ImplItemFn, ItemImpl, Lifetime, Path, PathArguments, ReceiverKind, Token, Type,
-    TypeParamBound,
+    Attribute, BoundLifetimes, Error, GenericArgument, GenericParam, Generics, Ident, ImplItem,
+    ImplItemFn, ItemImpl, Lifetime, Path, PathArguments, ReceiverKind, Token, Type, TypeParamBound,
     WherePredicate, parse_quote, parse2, punctuated::Punctuated,
 };
 
@@ -47,37 +46,6 @@ struct ReferenceOperator {
     output: Type,
     /// Impl items other than the operator method, repeated on the value overloads.
     associated_items: Vec<ImplItem>,
-}
-
-macro_docs! {
-    /// Repeats an operator implemented for references across its owned forms.
-    ///
-    /// From `impl Op<&Rhs> for &Lhs` it generates `Op<&Rhs>` and `Op<Rhs>` for `Lhs`,
-    /// and, when the result is `Lhs` itself, both `OpAssign` impls. Every generated
-    /// impl delegates to the attributed one; nothing is cloned.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use std::ops::Add;
-    /// use these_macros_should_be_illegal::overload_op;
-    ///
-    /// #[derive(Debug, PartialEq)]
-    /// struct Vector(f64, f64);
-    ///
-    /// #[overload_op]
-    /// impl Add<&Vector> for &Vector {
-    ///     type Output = Vector;
-    ///
-    ///     fn add(self, rhs: &Vector) -> Vector {
-    ///         Vector(self.0 + rhs.0, self.1 + rhs.1)
-    ///     }
-    /// }
-    ///
-    /// let mut total = Vector(1.0, 2.0) + Vector(3.0, 4.0);
-    /// total += &Vector(1.0, 1.0);
-    /// assert_eq!(total, Vector(5.0, 7.0));
-    /// ```
 }
 
 /// Repeats an operator implemented for references across its owned operand forms.
