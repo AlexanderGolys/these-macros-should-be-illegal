@@ -113,7 +113,7 @@ mod packed_product_variants {
     use super::*;
 
     strutuct! {
-        #[strutuct(product_variants = true)]
+        #[strutuct(product_variants)]
         Root { Pair(u8, u8), Record { value: u8 }, Single(u8) }
     }
 }
@@ -138,7 +138,7 @@ mod tuple_declarations {
 
     strutuct! {
         Configured(
-            #[strutuct(pub(crate), reverse_concat = true)] Choice { A, B },
+            #[strutuct(pub(crate), reverse_concat)] Choice { A, B },
             pub(crate) priv Inner(u8),
         )
     }
@@ -150,7 +150,7 @@ mod configuration_global_and_local {
     strutuct! {
         #[strutuct(priv)]
         enum Root {
-            #[strutuct(pub, reverse_concat = true)]
+            #[strutuct(pub, reverse_concat)]
             Branch(Branch { Leaf(Leaf { A, B }) }),
             Regular(Regular { A, B }),
         }
@@ -174,7 +174,7 @@ mod configuration_on_fields {
 
     strutuct! {
         struct Holder {
-            #[strutuct(pub(crate), reverse_concat = true)]
+            #[strutuct(pub(crate), reverse_concat)]
             pub value: enum Choice { Nested(Nested { A, B }) },
         }
     }
@@ -220,7 +220,7 @@ mod inlined_struct_variants_keep_declaration_attributes {
     use super::*;
 
     strutuct! {
-        #[derive(Debug, PartialEq)] #[repr(C)] #[strutuct(product_variants = false)]
+        #[derive(Debug, PartialEq)] #[repr(C)] #[strutuct(no_product_variants)]
         Root Branch { child: Child { A, B } }
     }
 }
@@ -245,7 +245,7 @@ mod inclusions_flatten_once_per_path {
     use super::*;
 
     strutuct! {
-        #[strutuct(inclusions = true)] A B(B { C(C { D(D { E }) }) })
+        #[strutuct(inclusions)] A B(B { C(C { D(D { E }) }) })
     }
 }
 
@@ -254,8 +254,8 @@ mod inclusions_per_enum_branch {
 
     strutuct! {
         Root
-        #[strutuct(inclusions = true)] Enabled(Enabled { Leaf })
-        #[strutuct(inclusions = false)] Disabled(Disabled { Leaf })
+        #[strutuct(inclusions)] Enabled(Enabled { Leaf })
+        #[strutuct(no_inclusions)] Disabled(Disabled { Leaf })
     }
 }
 
@@ -263,7 +263,7 @@ mod inclusion_names_reverse_incrementally {
     use super::*;
 
     strutuct! {
-        #[strutuct(inclusions = true, reverse_concat = true)] Root Branch(Branch { Leaf })
+        #[strutuct(inclusions, reverse_concat)] Root Branch(Branch { Leaf })
     }
 }
 
@@ -271,7 +271,7 @@ mod inclusions_carry_variant_conditions {
     use super::*;
 
     strutuct! {
-        #[strutuct(inclusions = true)] Root #[cfg(any())] Hidden(String) Visible(String)
+        #[strutuct(inclusions)] Root #[cfg(any())] Hidden(String) Visible(String)
     }
 }
 
@@ -279,7 +279,7 @@ mod inclusions_stop_at_product_boundaries {
     use super::*;
 
     strutuct! {
-        #[strutuct(inclusions = true)] Root Branch { child: Child { Leaf } }
+        #[strutuct(inclusions)] Root Branch { child: Child { Leaf } }
     }
 }
 

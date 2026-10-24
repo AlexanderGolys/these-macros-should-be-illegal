@@ -1,26 +1,19 @@
 //! One shared declaration prefix repeated on every field or variant of a data item.
 
-use proc_macro2::{Delimiter, TokenStream};
+use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{
     Attribute, Data, DeriveInput, Error, Field, Fields, FieldsNamed, FieldsUnnamed, Ident, LitStr,
-    Token, Type, Variant, Visibility,
-    parse::{Parse, ParseStream},
-    parse_quote, parse2,
-    punctuated::Punctuated,
-    token::Brace,
+    Token, Type, Variant, Visibility, parse_quote, parse2, punctuated::Punctuated,
 };
 
 use crate::helpers::ungroup;
 
-/// Repeats one shared member declaration prefix over every field or variant.
-pub fn forall(arguments: TokenStream, item: TokenStream) -> TokenStream {
-    let result = parse2::<MemberPrefix>(arguments)
-        .and_then(|prefix| parse2::<DeriveInput>(item).map(|item| (prefix, item)))
-        .and_then(|(prefix, mut item)| prefix.distribute(&mut item).map(|()| quote!(#item)));
-
-    result.unwrap_or_else(Error::into_compile_error)
-}
+use proc_macro2::Delimiter;
+use syn::{
+    parse::{Parse, ParseStream},
+    token::Brace,
+};
 
 /// The constant leading part of a member declaration: `#[attribute] pub Type`.
 struct MemberPrefix {
@@ -132,6 +125,25 @@ impl MemberPrefix {
 
         Ok(())
     }
+}
+
+/// Consumes the empty invisible group a `$:vis` fragment matching nothing leaves behind.
+fn skipped_empty_fragment(input: ParseStream) -> bool {
+    input
+        .step(|cursor| match cursor.group(Delimiter::None) {
+            Some((content, _, rest)) if content.eof() => Ok(((), rest)),
+            _ => Err(cursor.error("expected a fragment that matched nothing")),
+        })
+        .is_ok()
+}
+
+/// Repeats one shared member declaration prefix over every field or variant.
+pub fn forall(arguments: TokenStream, item: TokenStream) -> TokenStream {
+    let result = parse2::<MemberPrefix>(arguments)
+        .and_then(|prefix| parse2::<DeriveInput>(item).map(|item| (prefix, item)))
+        .and_then(|(prefix, mut item)| prefix.distribute(&mut item).map(|()| quote!(#item)));
+
+    result.unwrap_or_else(Error::into_compile_error)
 }
 
 /// Distribution of the prefix over the members of each kind of data item.
@@ -344,16 +356,6 @@ fn reject_discriminant(variant: &Variant) -> syn::Result<()> {
             ),
         )),
     }
-}
-
-/// Consumes the empty invisible group a `$:vis` fragment matching nothing leaves behind.
-fn skipped_empty_fragment(input: ParseStream) -> bool {
-    input
-        .step(|cursor| match cursor.group(Delimiter::None) {
-            Some((content, _, rest)) if content.eof() => Ok(((), rest)),
-            _ => Err(cursor.error("expected a fragment that matched nothing")),
-        })
-        .is_ok()
 }
 
 /// Reads one bare identifier written in tuple-field position as a field name.

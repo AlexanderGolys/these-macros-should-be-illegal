@@ -10,6 +10,7 @@ rather than assuming that their input is a Rust item or expression.
 `reflect!` accepts two macro paths and an opaque body:
 
 ```rust
+# #[macro_use] extern crate these_macros_should_be_illegal;
 macro_rules! add_one {
     ($expression:expr) => { 1 + $expression };
 }
@@ -24,7 +25,7 @@ assert_eq!(reflected, 8);
 
 It performs only the structural reflection
 
-```text
+```rust,ignore
 first! { second! { body } }
     ↦ second! { first! { body } }
 ```
@@ -37,7 +38,7 @@ them normally afterward.
 
 Internally the implementation is exactly the composition
 
-```text
+```rust,ignore
 invoke(second, invoke(first, body))
 ```
 
@@ -45,7 +46,7 @@ where `invoke` pairs one macro path with one opaque token stream.
 
 Outer attributes may precede either path and move together with that invocation:
 
-```text
+```rust,ignore
 reflect!(#[a] first, #[b] second; body)
     -> #[b] second! { #[a] first! { body } }
 ```
@@ -62,7 +63,7 @@ to the `reflect!` call, not either operand.
 `perm!` uses ordinary one-based cycle notation. Separate positions with spaces:
 `14` is one integer token, whereas `1 4` denotes two positions.
 
-```text
+```rust,ignore
 perm! { ((1 4 3)), a, b, c, d, e }
     -> c, b, d, a, e
 ```
@@ -77,7 +78,7 @@ the final non-fixed point. Therefore the identity needs no stored entries, a
 cycle constructs one finite map, and multiplication is ordinary function
 composition:
 
-```text
+```rust,ignore
 (sigma * tau)(i) = sigma(tau(i))
 ```
 

@@ -5,6 +5,7 @@ use quote::quote;
 use syn::{Error, ItemMacro, parse2};
 
 use crate::helpers::arguments::NoArguments;
+use crate::helpers::arguments::input as macro_args;
 
 /// Moves an invocation's remaining outer attributes into its opaque input.
 pub fn forward_attributes(arguments: TokenStream, item: TokenStream) -> TokenStream {
@@ -24,7 +25,12 @@ fn forward(item: TokenStream) -> syn::Result<TokenStream> {
 
     let attrs = std::mem::take(&mut invocation.attrs);
     let body = std::mem::take(&mut invocation.mac.tokens);
-    invocation.mac.tokens = quote!(#(#attrs)* ; #body);
+    let (arguments, body) = macro_args::split::<TokenStream>(body)?;
+    let body = quote!(#(#attrs)* ; #body);
+    invocation.mac.tokens = match arguments {
+        Some(arguments) => macro_args::prepend(arguments, body),
+        None => body,
+    };
 
     Ok(quote!(#invocation))
 }

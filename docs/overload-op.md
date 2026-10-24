@@ -12,6 +12,7 @@ method name are all already written in the impl it is attached to, which is
 emitted unchanged.
 
 ```rust
+# #[macro_use] extern crate these_macros_should_be_illegal;
 use std::ops::Add;
 #[derive(Debug, PartialEq)]
 struct Vector(f64, f64);
@@ -44,6 +45,7 @@ hand instead would force the borrowed forms to clone, so that direction is
 rejected rather than supported:
 
 ```rust,compile_fail
+# #[macro_use] extern crate these_macros_should_be_illegal;
 use std::ops::Add;
 struct Vector(f64);
 
@@ -78,6 +80,7 @@ Spelled out for an addition, the generated impls are the following. Run it, or
 reveal the hidden lines to see the hand-written impl they all delegate to:
 
 ```rust,mdbook-runnable
+# #[macro_use] extern crate these_macros_should_be_illegal;
 # use std::ops::{Add, AddAssign};
 #
 # #[derive(Debug, PartialEq)]
@@ -130,6 +133,7 @@ operand with an owned right one, which is not a spelling ordinary code uses.
 A unary operator generates the single owned form:
 
 ```rust
+# #[macro_use] extern crate these_macros_should_be_illegal;
 use std::ops::Neg;
 #[derive(Debug, PartialEq)]
 struct Vector(f64, f64);
@@ -152,6 +156,7 @@ right operand still has one when its method takes an argument — `Rhs` then
 defaults to `Self`, which is the borrowed left operand:
 
 ```rust
+# #[macro_use] extern crate these_macros_should_be_illegal;
 use std::ops::Add;
 #[derive(Debug, PartialEq)]
 struct Count(u32);
@@ -180,6 +185,7 @@ operand, because `a = a op b` is then not even well typed. An operator such as
 `Point - Point -> Vector` therefore generates only the two ownership overloads:
 
 ```rust
+# #[macro_use] extern crate these_macros_should_be_illegal;
 use std::ops::Sub;
 #[derive(Debug, PartialEq)]
 struct Vector(f64);
@@ -222,6 +228,7 @@ named by convention, suffixing the trait with `Assign` and the method with
 `_assign`:
 
 ```rust
+# #[macro_use] extern crate these_macros_should_be_illegal;
 trait Join<Rhs> {
     type Output;
     fn join(self, rhs: Rhs) -> Self::Output;
@@ -296,6 +303,7 @@ constrained the lifetime being removed, and `for<'a> T: 'a` would demand
 `'static` rather than what was written, so it is dropped with the lifetime.
 
 ```rust
+# #[macro_use] extern crate these_macros_should_be_illegal;
 use std::ops::Add;
 #[derive(Debug, PartialEq)]
 struct Pair<T>(T, T);

@@ -14,6 +14,7 @@ Keywords and raw identifiers are accepted as names; the raw `r#` marker is not
 part of the result.
 
 ```rust
+# #[macro_use] extern crate these_macros_should_be_illegal;
 const CAMEL: &str = stringify_as!(camel; some_HTTP_server);
 const PASCAL: &str = stringify_as!(pascal; some_HTTP_server);
 const SNAKE: &str = stringify_as!(snake; SomeHTTPServer);
@@ -47,6 +48,7 @@ A string literal contributes its contents rather than its Rust source spelling,
 so this also converts names that cannot be written as one identifier:
 
 ```rust
+# #[macro_use] extern crate these_macros_should_be_illegal;
 assert_eq!(stringify_as!(pascal; "some-http-server"), "SomeHttpServer");
 assert_eq!(stringify_as!(upper; r#type), "TYPE");
 ```
@@ -61,6 +63,7 @@ The `type` option parses exactly one Rust type and emits a compact spelling with
 the prefix `type:`:
 
 ```rust
+# #[macro_use] extern crate these_macros_should_be_illegal;
 const SIMPLE: &str = stringify_as!(type; String);
 const BORROWED: &str = stringify_as!(type; &'static mut Vec<Option<String>>);
 const FUNCTION: &str =

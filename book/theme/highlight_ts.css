@@ -1,5 +1,5 @@
 /*
- * Default theme for mdbook-treesitter.
+ * Highlighting theme replacing the stylesheet bundled with mdbook-tsitter.
  *
  * The preprocessor emits one `<span class="ts-…">` per tree-sitter capture,
  * using the capture name as the class (dots become hyphens, and each prefix is
@@ -29,9 +29,6 @@
 
 /* Light themes (light, rust) — Tomorrow palette; also the default. */
 :root {
-  /* Two 68-column code panes (the longest example plus two columns), their
-     mdBook padding, and the comparison gap. All content shares this measure. */
-  --content-max-width: 119.75rem;
   --ts-red:    #d70025;
   --ts-orange: #b21e00;
   --ts-yellow: #946800;
@@ -114,60 +111,49 @@ pre.treesitter > code.hljs {
   color: inherit;
 }
 
-/* Comparison grids occupy the same measure as every other kind of content. */
-.highlight-comparison-key,
-.highlight-comparison {
+/* Side-by-side panes (```lang,pane="…"): each under its bold, ruled title,
+   the same height, and as wide as every other kind of content. */
+.treesitter-side-by-side {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  align-items: stretch;
   width: 100%;
   column-gap: 1.5rem;
-}
-
-.highlight-comparison-key {
   margin-top: 1.5rem;
-  margin-bottom: 2.5rem;
-  padding-bottom: 0.55rem;
-  border-bottom: 1px solid var(--table-border-color);
-  font-size: 0.9em;
-}
-
-.highlight-comparison {
-  align-items: stretch;
-  margin-top: 0.75rem;
   margin-bottom: 3.25rem;
 }
 
-.highlight-comparison-pane {
+.treesitter-pane {
   display: flex;
   min-width: 0;
   flex-direction: column;
 }
 
-.highlight-comparison-pane > pre {
+.treesitter-pane-label {
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.55rem;
+  border-bottom: 1px solid var(--table-border-color);
+  font-size: 0.9em;
+  font-weight: bold;
+}
+
+.treesitter-pane > pre {
   box-sizing: border-box;
   width: 100%;
-  height: 100%;
   flex: 1;
   margin: 0;
 }
 
-.highlight-comparison-pane > pre > code {
+.treesitter-pane > pre > code {
   box-sizing: border-box;
   display: block;
   min-height: 100%;
 }
 
 @media (max-width: 48em) {
-  .highlight-comparison-key,
-  .highlight-comparison {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .highlight-comparison-key {
-    display: none;
-  }
-
-  .highlight-comparison {
+  .treesitter-side-by-side {
+    grid-auto-flow: row;
     row-gap: 1.5rem;
   }
 }

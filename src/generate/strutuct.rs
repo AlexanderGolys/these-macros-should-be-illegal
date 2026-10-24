@@ -3,7 +3,7 @@
 use proc_macro2::{Span, TokenStream, TokenTree};
 use quote::{ToTokens, quote};
 use syn::{
-    Attribute, Error, Ident, LitBool, LitStr, Meta, Path, Token, Type, Visibility, braced,
+    Attribute, Error, Ident, LitStr, Path, Token, Type, Visibility, braced,
     ext::IdentExt,
     parenthesized,
     parse::{Parse, ParseStream},
@@ -13,71 +13,12 @@ use syn::{
     token::{Brace, Paren},
 };
 
-/// Expands one nested algebraic declaration into ordinary Rust items.
-pub fn strutuct(input: TokenStream) -> TokenStream {
-    parse2::<Invocation>(input)
-        .and_then(Invocation::lower)
-        .unwrap_or_else(Error::into_compile_error)
-}
-
-/// Lowering behavior in effect for one declaration, field, or variant branch.
-///
-/// Every field corresponds to one `#[strutuct(...)]` entry; the defaults equal
-///
-/// ```text
-/// #[strutuct(inclusions = false, product_variants = false, priv, reverse_concat = false)]
-/// ```
-#[derive(Clone)]
-struct Options {
-    /// Whether enums generate consuming inclusion functions for constructor paths.
-    inclusions: bool,
-    /// Whether tuple-like and struct-like variants carry one packed product payload.
-    product_variants: bool,
-    /// Visibility of every generated declaration and field written without one.
-    visibility: Visibility,
-    /// Order in which generated names are concatenated.
-    concat_order: ConcatOrder,
-}
-
-/// Supplies the default algebraic lowering behavior.
-impl Default for Options {
-    /// Emits private items and ordinary Rust variants, without inclusions.
-    fn default() -> Self {
-        Self {
-            inclusions: false,
-            product_variants: false,
-            visibility: Visibility::Inherited,
-            concat_order: ConcatOrder::Written,
-        }
-    }
-}
-
-impl Options {
-    /// Returns a copy updated by every option explicitly set on one object.
-    fn with(&self, overrides: &OptionOverrides) -> Self {
-        Self {
-            inclusions: overrides.inclusions.unwrap_or(self.inclusions),
-            product_variants: overrides.product_variants.unwrap_or(self.product_variants),
-            visibility: overrides
-                .visibility
-                .clone()
-                .unwrap_or_else(|| self.visibility.clone()),
-            concat_order: overrides
-                .reverse_concat
-                .map_or(self.concat_order, ConcatOrder::from),
-        }
-    }
-
-    /// Resolves the visibility written before one object against the inherited default.
-    fn resolve_visibility(&self, explicit: Option<Visibility>) -> Visibility {
-        explicit.unwrap_or_else(|| self.visibility.clone())
-    }
-}
+use syn::Meta;
 
 /// Options explicitly set by `#[strutuct(...)]` attributes on one object.
 ///
-/// ```text
-/// #[strutuct(pub(crate), reverse_concat = true)]
+/// ```rust,ignore
+/// #[strutuct(pub(crate), reverse_concat)]
 /// // visibility: Some(pub(crate)), reverse_concat: Some(true), everything else inherited
 /// ```
 #[derive(Clone, Default)]
@@ -90,6 +31,17 @@ struct OptionOverrides {
     visibility: Option<Visibility>,
     /// Per-object override for identifier concatenation order.
     reverse_concat: Option<bool>,
+    /// Whether this branch permits declarations and members without documentation.
+    allow_missing_docs: Option<bool>,
+}
+
+/// Uses the same option grammar in parameter envelopes and local attributes.
+impl Parse for OptionOverrides {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut options = Self::default();
+        options.parse_entries(input)?;
+        Ok(options)
+    }
 }
 
 impl OptionOverrides {
@@ -100,6 +52,7 @@ impl OptionOverrides {
             product_variants: local.product_variants.or(self.product_variants),
             visibility: local.visibility.or(self.visibility),
             reverse_concat: local.reverse_concat.or(self.reverse_concat),
+            allow_missing_docs: local.allow_missing_docs.or(self.allow_missing_docs),
         }
     }
 
@@ -145,24 +98,44 @@ impl OptionOverrides {
                 }
             } else {
                 let name = input.parse::<Ident>()?;
-                let slot = if name == "inclusions" {
-                    &mut self.inclusions
-                } else if name == "product_variants" {
-                    &mut self.product_variants
-                } else if name == "reverse_concat" {
-                    &mut self.reverse_concat
-                } else {
+                let spelling = name.to_string();
+                let (option, enabled) = match spelling.strip_prefix("no_") {
+                    Some(option) => (option, false),
+                    None => (spelling.as_str(), true),
+                };
+                let option = match option {
+                    "inc" => "inclusions",
+                    "prod" => "product_variants",
+                    "rev" => "reverse_concat",
+                    "undoc" => "allow_missing_docs",
+                    option => option,
+                };
+                let slot = match option {
+                    "inclusions" => &mut self.inclusions,
+                    "product_variants" => &mut self.product_variants,
+                    "reverse_concat" => &mut self.reverse_concat,
+                    "allow_missing_docs" => &mut self.allow_missing_docs,
+                    _ => {
+                        return Err(Error::new(
+                            entry,
+                            "unknown `strutuct` option; expected a visibility, `inclusions` (`inc`), \
+                             `product_variants` (`prod`), `reverse_concat` (`rev`), \
+                             `allow_missing_docs` (`undoc`), or a `no_` form of these flags",
+                        ));
+                    }
+                };
+                if input.peek(Token![=]) {
                     return Err(Error::new(
                         entry,
-                        "unknown `strutuct` option; expected a visibility, `inclusions`, \
-                         `product_variants`, or `reverse_concat`",
+                        format!(
+                            "use the bare flag `{option}` or `no_{option}` instead of a boolean value"
+                        ),
                     ));
-                };
+                }
                 if slot.is_some() {
                     return Err(Error::new(entry, "duplicate `strutuct` option"));
                 }
-                input.parse::<Token![=]>()?;
-                *slot = Some(input.parse::<LitBool>()?.value);
+                *slot = Some(enabled);
             }
             if !input.is_empty() {
                 input.parse::<Token![,]>()?;
@@ -185,11 +158,130 @@ fn parse_explicit_visibility(input: ParseStream) -> syn::Result<Visibility> {
     input.parse()
 }
 
+#[cfg(test)]
+mod argument_tests {
+    //! Validation shared by root envelopes and declaration-local options.
+
+    use super::OptionOverrides;
+
+    /// Full and short names resolve to one option, including negated overrides.
+    #[test]
+    fn aliases_share_values_and_duplicate_checks() {
+        let enabled: OptionOverrides = syn::parse_str("inc, prod, rev, undoc").unwrap();
+        assert_eq!(enabled.inclusions, Some(true));
+        assert_eq!(enabled.product_variants, Some(true));
+        assert_eq!(enabled.reverse_concat, Some(true));
+        assert_eq!(enabled.allow_missing_docs, Some(true));
+
+        let disabled = enabled.with(syn::parse_str("no_inc, no_prod, no_rev, no_undoc").unwrap());
+        assert_eq!(disabled.inclusions, Some(false));
+        assert_eq!(disabled.product_variants, Some(false));
+        assert_eq!(disabled.reverse_concat, Some(false));
+        assert_eq!(disabled.allow_missing_docs, Some(false));
+
+        for (name, alias) in [
+            ("inclusions", "inc"),
+            ("product_variants", "prod"),
+            ("reverse_concat", "rev"),
+            ("allow_missing_docs", "undoc"),
+        ] {
+            for options in [
+                format!("{name}, {alias}"),
+                format!("no_{alias}, {name}"),
+                format!("no_{name}, {alias}"),
+            ] {
+                let error = syn::parse_str::<OptionOverrides>(&options).err().unwrap();
+                assert!(
+                    error.to_string().contains("duplicate"),
+                    "{options}: {error}"
+                );
+            }
+            for options in [format!("{alias} = true"), format!("no_{alias} = false")] {
+                let error = syn::parse_str::<OptionOverrides>(&options).err().unwrap();
+                assert!(error.to_string().contains("use the bare flag"));
+            }
+        }
+    }
+}
+
+/// Expands one nested algebraic declaration into ordinary Rust items.
+pub fn strutuct(input: TokenStream) -> TokenStream {
+    parse2::<Invocation>(input)
+        .and_then(Invocation::lower)
+        .unwrap_or_else(Error::into_compile_error)
+}
+
+/// Lowering behavior in effect for one declaration, field, or variant branch.
+///
+/// Every field corresponds to one `#[strutuct(...)]` entry; the defaults equal
+///
+/// ```
+/// #[strutuct(no_inclusions, no_product_variants, priv, no_reverse_concat)]
+/// ```
+#[derive(Clone)]
+struct Options {
+    /// Whether enums generate consuming inclusion functions for constructor paths.
+    inclusions: bool,
+    /// Whether tuple-like and struct-like variants carry one packed product payload.
+    product_variants: bool,
+    /// Visibility of every generated declaration and field written without one.
+    visibility: Visibility,
+    /// Order in which generated names are concatenated.
+    concat_order: ConcatOrder,
+    /// Whether missing documentation is allowed on generated declarations and members.
+    allow_missing_docs: bool,
+}
+
+/// Supplies the default algebraic lowering behavior.
+impl Default for Options {
+    /// Emits private items and ordinary Rust variants, without inclusions.
+    fn default() -> Self {
+        Self {
+            inclusions: false,
+            product_variants: false,
+            visibility: Visibility::Inherited,
+            concat_order: ConcatOrder::Written,
+            allow_missing_docs: false,
+        }
+    }
+}
+
+impl Options {
+    /// Returns a copy updated by every option explicitly set on one object.
+    fn with(&self, overrides: &OptionOverrides) -> Self {
+        Self {
+            inclusions: overrides.inclusions.unwrap_or(self.inclusions),
+            product_variants: overrides.product_variants.unwrap_or(self.product_variants),
+            allow_missing_docs: overrides
+                .allow_missing_docs
+                .unwrap_or(self.allow_missing_docs),
+            visibility: overrides
+                .visibility
+                .clone()
+                .unwrap_or_else(|| self.visibility.clone()),
+            concat_order: overrides
+                .reverse_concat
+                .map_or(self.concat_order, ConcatOrder::from),
+        }
+    }
+
+    /// Resolves the visibility written before one object against the inherited default.
+    fn resolve_visibility(&self, explicit: Option<Visibility>) -> Visibility {
+        explicit.unwrap_or_else(|| self.visibility.clone())
+    }
+
+    /// Applies the optional documentation lint allowance to one generated syntax node.
+    fn documentation_lint(&self) -> Option<Attribute> {
+        self.allow_missing_docs
+            .then(|| syn::parse_quote!(#[allow(missing_docs)]))
+    }
+}
+
 /// Order in which two identifiers are joined into one generated name.
 ///
-/// ```text
+/// ```rust,ignore
 /// Root field: Child { A }                                  // RootChild
-/// #[strutuct(reverse_concat = true)] Root field: Child { A } // ChildRoot
+/// #[strutuct(reverse_concat)] Root field: Child { A } // ChildRoot
 /// ```
 #[derive(Clone, Copy)]
 enum ConcatOrder {
@@ -201,7 +293,7 @@ enum ConcatOrder {
 
 /// Selects the order from the value of the `reverse_concat` option.
 impl From<bool> for ConcatOrder {
-    /// Maps `reverse_concat = true` to [`ConcatOrder::Reversed`].
+    /// Maps `reverse_concat` to [`ConcatOrder::Reversed`].
     fn from(reversed: bool) -> Self {
         if reversed {
             Self::Reversed
@@ -227,7 +319,7 @@ impl ConcatOrder {
 
 /// Role an outer attribute plays when it is forwarded to generated items.
 ///
-/// ```text
+/// ```rust,ignore
 /// #[doc = "..."]       Documentation: stays on the item it was written on
 /// #[derive(Debug)]     Derive:        merged into every generated descendant
 /// #[underive(Debug)]   Underive:      subtracted from one generated branch
@@ -282,7 +374,7 @@ impl AttributeRole {
 
 /// Collections of syntax nodes deduplicated by their token spelling.
 ///
-/// ```text
+/// ```rust,ignore
 /// [Debug, Clone].push_unique(Clone)   // [Debug, Clone]
 /// ```
 trait UniqueTokens<T> {
@@ -313,7 +405,7 @@ impl<T: ToTokens> UniqueTokens<T> for Vec<T> {
 
 /// Trait paths merged from `derive` attributes and reduced by `underive` attributes.
 ///
-/// ```text
+/// ```rust,ignore
 /// #[derive(Debug, Clone)] Root #[underive(Clone)] child: Child { A, B },
 /// // Root derives Debug and Clone; RootChild derives Debug only
 /// ```
@@ -374,7 +466,7 @@ impl DeriveList {
 
 /// One complete invocation: forwarded attributes followed by the root declaration.
 ///
-/// ```text
+/// ```rust,ignore
 /// #[derive(Debug)] ; pub Request method: Method { Get, Post }, body: String?,
 /// pub struct Request { method: Method { Get, Post }, body: String? }
 /// Pair(String, u8)
@@ -390,8 +482,10 @@ impl Parse for Invocation {
     ///
     /// The body is braced, parenthesized as the whole remaining input, or written bare.
     fn parse(input: ParseStream) -> syn::Result<Self> {
+        let parameters = crate::helpers::arguments::input::parse_prefix::<OptionOverrides>(input)?
+            .unwrap_or_default();
         let mut forwarded = input.call(Attribute::parse_outer)?;
-        let forwarded_options = OptionOverrides::take_from(&mut forwarded)?;
+        let forwarded_options = parameters.with(OptionOverrides::take_from(&mut forwarded)?);
         input.parse::<Option<Token![;]>>()?;
         let mut header = input.parse::<DeclarationHeader>()?;
         header.attrs.splice(0..0, forwarded);
@@ -427,7 +521,7 @@ impl Invocation {
 
 /// Attributes, options, visibility, and shape keyword written before a member.
 ///
-/// ```text
+/// ```rust,ignore
 /// #[derive(Debug)] #[strutuct(pub(crate))] pub(crate) enum   Choice { A, B }
 /// #[serde(default)] priv                                       field: u8
 /// ```
@@ -470,7 +564,7 @@ impl Parse for DeclarationHeader {
 
 /// Optional Rust-like keyword used only to validate an inferred declaration shape.
 ///
-/// ```text
+/// ```rust,ignore
 /// struct Point { x: f32, y: f32 }   // accepted
 /// struct Choice { A, B }            // rejected: the body is an enum
 /// ```
@@ -508,7 +602,7 @@ impl DeclarationKeyword {
 
 /// One declaration whose shape is inferred from its members.
 ///
-/// ```text
+/// ```rust,ignore
 /// Request { method: Method, body: String }   // struct
 /// Pair(u8, u8)                               // tuple struct
 /// Method { Get, Post }                       // enum
@@ -687,8 +781,10 @@ impl Declaration {
         inclusion_owner_active: bool,
     ) -> syn::Result<LoweredDeclaration> {
         let options = options.with(&self.options);
+        let mut attrs = self.attrs;
+        attrs.extend(options.documentation_lint());
         let item = GeneratedItem {
-            attrs: self.attrs,
+            attrs,
             visibility: options.resolve_visibility(self.visibility),
             ident: self.ident,
         };
@@ -721,7 +817,7 @@ impl Declaration {
 
 /// How an inline declaration's identifier becomes its generated Rust name.
 ///
-/// ```text
+/// ```rust,ignore
 /// Root field: Child { A }    // Relative: RootChild
 /// Root field: |Child| { A }  // Exact:    Child
 /// ```
@@ -735,7 +831,7 @@ enum DeclarationName {
 
 /// The declaration shapes inferred from the DSL body.
 ///
-/// ```text
+/// ```rust,ignore
 /// |Marker|                  // Unit: no body
 /// (String, u8)              // Tuple: a parenthesized body
 /// { x: f32, y: f32 }        // Struct: a braced body whose members start with `name:`
@@ -796,7 +892,7 @@ impl DeclarationBody {
 
 /// One named field of a generated struct or struct-like variant.
 ///
-/// ```text
+/// ```rust,ignore
 /// #[serde(default)] priv method: Method { Get, Post }?
 /// ```
 struct StructField {
@@ -847,7 +943,7 @@ impl StructField {
 
 /// One positional field of a generated tuple struct.
 ///
-/// ```text
+/// ```rust,ignore
 /// #[serde(default)] priv Method { Get, Post }?
 /// ```
 struct TupleField {
@@ -894,8 +990,8 @@ impl Parse for TupleField {
 
 /// One enum variant together with its attributes and local options.
 ///
-/// ```text
-/// #[strutuct(inclusions = true)] Branch(Branch { Leaf(String), Empty })
+/// ```rust,ignore
+/// #[strutuct(inclusions)] Branch(Branch { Leaf(String), Empty })
 /// ```
 struct ParsedEnumVariant {
     /// Ordinary Rust attributes forwarded to the generated variant.
@@ -1019,7 +1115,7 @@ impl Parse for ParsedEnumVariant {
 
 /// Syntactic form of one generated enum variant.
 ///
-/// ```text
+/// ```rust,ignore
 /// Null                   // Unit:     Null
 /// Pair(String, u8)       // Tuple:    Pair(String, u8)
 /// Span { start: usize }  // Struct:   Span { start: usize }
@@ -1069,7 +1165,7 @@ impl EnumVariant {
 
 /// A parenthesized, comma-separated list of type expressions.
 ///
-/// ```text
+/// ```rust,ignore
 /// (String, Item { A, B }?)
 /// ```
 struct ParenthesizedTypes {
@@ -1096,7 +1192,7 @@ impl Parse for ParenthesizedTypes {
 ///
 /// Rust types, including their generic arguments, are copied unchanged.
 ///
-/// ```text
+/// ```rust,ignore
 /// Method { Get, Post }?            // nested enum wrapped in Option
 /// Pair(u8, Kind { A, B })          // nested tuple struct containing another declaration
 /// Vec<Box<dyn Fn(u8)>>*            // Rust type, boxed
@@ -1219,7 +1315,7 @@ impl TypeExpression {
 
 /// The unwrapped portion of a field or variant type.
 ///
-/// ```text
+/// ```rust,ignore
 /// Method { Get, Post }        // Nested
 /// Vec<Box<dyn Fn(u8)>>        // Rust
 /// ```
@@ -1232,7 +1328,7 @@ enum TypeBase {
 
 /// Supported postfix type constructors.
 ///
-/// ```text
+/// ```rust,ignore
 /// Item?    // Option<Item>
 /// Item*    // Box<Item>
 /// Item?*   // Box<Option<Item>>
@@ -1279,7 +1375,7 @@ impl TypeWrapper {
 
 /// Final path segment naming a Rust type, used to derive implicit variant names.
 ///
-/// ```text
+/// ```rust,ignore
 /// std::string::String   // String
 /// (Vec<u8>)             // Vec
 /// &str                  // none
@@ -1307,7 +1403,7 @@ impl TerminalIdent for Type {
 
 /// Whether a lowered declaration is a product or sum type, selecting its constructor macro.
 ///
-/// ```text
+/// ```rust,ignore
 /// |Marker|          // Unit:   Marker!()
 /// { x: u8 }         // Struct: Point!(x: 1)
 /// (u8, u8)         // Tuple:  Pair!(1, 2)
@@ -1373,7 +1469,7 @@ impl DeclarationKind {
             "a"
         };
         let documentation = LitStr::new(
-            &format!("Constructs {article} `{ident}` value generated by `strutuct!`."),
+            &format!("Constructs {article} `{ident}` value."),
             ident.span(),
         );
         match self {
@@ -1388,35 +1484,35 @@ impl DeclarationKind {
                 }
             },
             Self::Struct => quote! {
-                // #(#attrs)*
-                // #[doc = #documentation]
-                // #[allow(unused_macros)]
-                // macro_rules! #ident {
-                //     ($($fields:tt)*) => {
-                //         #ident { $($fields)* }
-                //     };
-                // }
+                #(#attrs)*
+                #[doc = #documentation]
+                #[allow(unused_macros)]
+                macro_rules! #ident {
+                    ($($fields:tt)*) => {
+                        #ident { $($fields)* }
+                    };
+                }
             },
             Self::Tuple => quote! {
-                // #(#attrs)*
-                // #[doc = #documentation]
-                // #[allow(unused_macros)]
-                // macro_rules! #ident {
-                //     ($($fields:tt)*) => {
-                //         #ident($($fields)*)
-                //     };
-                // }
+                #(#attrs)*
+                #[doc = #documentation]
+                #[allow(unused_macros)]
+                macro_rules! #ident {
+                    ($($fields:tt)*) => {
+                        #ident($($fields)*)
+                    };
+                }
             },
             Self::Enum => quote! {
-                // #(#attrs)*
-                // #[doc = #documentation]
-                // #[allow(unused_macros)]
-                // macro_rules! #ident {
-                //     #(#specialized_arms)*
-                //     ($($variant:tt)+) => {
-                //         #ident::$($variant)+
-                //     };
-                // }
+                #(#attrs)*
+                #[doc = #documentation]
+                #[allow(unused_macros)]
+                macro_rules! #ident {
+                    #(#specialized_arms)*
+                    ($($variant:tt)+) => {
+                        #ident::$($variant)+
+                    };
+                }
             },
         }
     }
@@ -1424,7 +1520,7 @@ impl DeclarationKind {
 
 /// Resolved attributes, visibility, and name of one Rust item about to be emitted.
 ///
-/// ```text
+/// ```rust,ignore
 /// #[derive(Debug)] pub struct Request
 /// ```
 struct GeneratedItem {
@@ -1445,15 +1541,10 @@ impl GeneratedItem {
             ident,
         } = self;
         let macro_attrs = AttributeRole::Conditional.select(&attrs);
-        let documentation = LitStr::new(
-            &format!("Unit struct generated by `strutuct!` for `{ident}`."),
-            ident.span(),
-        );
         let items = vec![
             quote! {
                 #[allow(dead_code)]
                 #(#attrs)*
-                #[doc = #documentation]
                 #visibility struct #ident;
             },
             DeclarationKind::Unit.constructor_macro(&ident, &macro_attrs, &[]),
@@ -1492,7 +1583,8 @@ impl GeneratedItem {
             let field_options = options.with(&field.options);
             let lowered = field.ty.lower(&field_options, &ident, false)?;
             items.extend(lowered.items);
-            let field_attrs = field.attrs;
+            let mut field_attrs = field.attrs;
+            field_attrs.extend(field_options.documentation_lint());
             let field_visibility = field_options.resolve_visibility(field.visibility);
             let field_ident = field.ident;
             let field_ty = lowered.ty;
@@ -1500,25 +1592,15 @@ impl GeneratedItem {
                 selector: ProductSelector::Named(field_ident.clone()),
                 ty: lowered.algebra,
             });
-            let field_documentation = LitStr::new(
-                &format!("Field `{ident}::{field_ident}` generated by `strutuct!`."),
-                field_ident.span(),
-            );
             lowered_fields.push(quote! {
                 #(#field_attrs)*
-                #[doc = #field_documentation]
                 #field_visibility #field_ident: #field_ty
             });
         }
 
-        let documentation = LitStr::new(
-            &format!("Struct generated by `strutuct!` for `{ident}`."),
-            ident.span(),
-        );
         items.push(quote! {
             #[allow(dead_code)]
             #(#attrs)*
-            #[doc = #documentation]
             #visibility struct #ident {
                 #(#lowered_fields),*
             }
@@ -1558,32 +1640,23 @@ impl GeneratedItem {
             let field_options = options.with(&field.options);
             let lowered = field.ty.lower(&field_options, &ident, false)?;
             items.extend(lowered.items);
-            let field_attrs = field.attrs;
+            let mut field_attrs = field.attrs;
+            field_attrs.extend(field_options.documentation_lint());
             let field_visibility = field_options.resolve_visibility(field.visibility);
             let field_ty = lowered.ty;
             components.push(ProductComponent {
                 selector: ProductSelector::Positional(index),
                 ty: lowered.algebra,
             });
-            let field_documentation = LitStr::new(
-                &format!("Field `{ident}::{index}` generated by `strutuct!`."),
-                ident.span(),
-            );
             lowered_fields.push(quote! {
                 #(#field_attrs)*
-                #[doc = #field_documentation]
                 #field_visibility #field_ty
             });
         }
 
-        let documentation = LitStr::new(
-            &format!("Tuple struct generated by `strutuct!` for `{ident}`."),
-            ident.span(),
-        );
         items.push(quote! {
             #[allow(dead_code)]
             #(#attrs)*
-            #[doc = #documentation]
             #visibility struct #ident(#(#lowered_fields),*);
         });
         items.push(DeclarationKind::Tuple.constructor_macro(&ident, &macro_attrs, &[]));
@@ -1632,10 +1705,6 @@ impl GeneratedItem {
             ..
         } = lowering;
 
-        let documentation = LitStr::new(
-            &format!("Enum generated by `strutuct!` for `{ident}`."),
-            ident.span(),
-        );
         let algebra = AlgebraicType {
             ty: ident.to_token_stream(),
             shape: AlgebraicShape::Coproduct(branches),
@@ -1644,9 +1713,8 @@ impl GeneratedItem {
             declaration_kind: Some(DeclarationKind::Enum),
         };
         items.push(quote! {
-            #[allow(dead_code)]
+            #[allow(dead_code, clippy::enum_variant_names)]
             #(#attrs)*
-            #[doc = #documentation]
             #visibility enum #ident {
                 #(#lowered_variants),*
             }
@@ -1655,9 +1723,9 @@ impl GeneratedItem {
         if !inclusion_owner_active {
             let flattened = algebra.flattened_coproduct();
             debug_assert!(flattened.len() <= algebra.node_count());
-            // for inclusion in flattened {
-            //     items.push(inclusion.emit(&ident, &visibility)?);
-            // }
+            for inclusion in flattened {
+                items.push(inclusion.emit(&ident, &visibility)?);
+            }
         }
 
         Ok(LoweredDeclaration {
@@ -1670,7 +1738,7 @@ impl GeneratedItem {
 
 /// Enum variants, hoisted items, macro arms, and algebraic branches collected one variant at a time.
 ///
-/// ```text
+/// ```rust,ignore
 /// Expr Unary(Unary { (Pref), (Post) }) (Bin) Null
 /// // items:      enum ExprUnary and its macro
 /// // variants:   Unary(ExprUnary), BinExpr(Bin), Null
@@ -1693,11 +1761,12 @@ impl EnumLowering {
     /// Lowers one parsed variant under the enum's options.
     fn push(&mut self, variant: ParsedEnumVariant, options: &Options) -> syn::Result<()> {
         let ParsedEnumVariant {
-            attrs,
+            mut attrs,
             options: overrides,
             kind,
         } = variant;
         let options = options.with(&overrides);
+        attrs.extend(options.documentation_lint());
         match kind {
             EnumVariant::Implicit(ty) => self.push_implicit(attrs, *ty, &options),
             EnumVariant::Tuple { ident, fields } => self.push_tuple(attrs, ident, fields, &options),
@@ -1711,16 +1780,10 @@ impl EnumLowering {
         }
     }
 
-    /// Emits one documented Rust variant with the given payload syntax.
+    /// Emits one Rust variant with its supplied attributes and payload syntax.
     fn emit_variant(&mut self, attrs: &[Attribute], variant: &Ident, payload: TokenStream) {
-        let enum_ident = &self.ident;
-        let documentation = LitStr::new(
-            &format!("Variant `{enum_ident}::{variant}` generated by `strutuct!`."),
-            variant.span(),
-        );
         self.variants.push(quote! {
             #(#attrs)*
-            #[doc = #documentation]
             #variant #payload
         });
     }
@@ -1893,7 +1956,8 @@ impl EnumLowering {
                 let field_options = options.with(&field.options);
                 let lowered = field.ty.lower(&field_options, &ident, false)?;
                 self.items.extend(lowered.items);
-                let field_attrs = field.attrs;
+                let mut field_attrs = field.attrs;
+                field_attrs.extend(field_options.documentation_lint());
                 let field_ident = field.ident;
                 let field_ty = lowered.ty;
                 components.push(ProductComponent {
@@ -1901,14 +1965,9 @@ impl EnumLowering {
                     ty: lowered.algebra,
                 });
                 field_names.push(field_ident.clone());
-                let field_documentation = LitStr::new(
-                    &format!("Field `{ident}::{variant}::{field_ident}` generated by `strutuct!`."),
-                    field_ident.span(),
-                );
                 lowered_fields.push(quote! {
                     #(#field_attrs)*
-                    #[doc = #field_documentation]
-                    #field_ident: #field_ty
+                        #field_ident: #field_ty
                 });
             }
             self.emit_variant(&attrs, &variant, quote!({ #(#lowered_fields),* }));
@@ -1964,7 +2023,7 @@ impl EnumLowering {
 
 /// Fully lowered declaration together with its generated items.
 ///
-/// ```text
+/// ```rust,ignore
 /// Method { Get, Post }   // items: enum RequestMethod, macro RequestMethod; ident: RequestMethod
 /// ```
 struct LoweredDeclaration {
@@ -1978,7 +2037,7 @@ struct LoweredDeclaration {
 
 /// Fully lowered type expression and nested items collected from it.
 ///
-/// ```text
+/// ```rust,ignore
 /// Method { Get, Post }?   // ty: Option<RequestMethod>, name: RequestMethod, wrapped
 /// ```
 struct LoweredType {
@@ -1996,7 +2055,7 @@ struct LoweredType {
 
 /// A lowered Rust type retaining the algebraic structure relevant to generated maps.
 ///
-/// ```text
+/// ```rust,ignore
 /// Expr Unary(Unary { (Pref), (Post) }) Null
 /// // Coproduct[Unary: Coproduct[Pref: Rust, Post: Rust], Null: Unit]
 /// ```
@@ -2015,7 +2074,7 @@ struct AlgebraicType {
 
 /// Structural algebraic form retained after the Rust items have been lowered.
 ///
-/// ```text
+/// ```rust,ignore
 /// Vec<u8>              // Rust
 /// Null                 // Unit
 /// { x: u8, y: u8 }     // Product
@@ -2042,7 +2101,7 @@ enum AlgebraicShape {
 
 /// One algebraic layer whose immediate children have already been folded.
 ///
-/// ```text
+/// ```rust,ignore
 /// Coproduct[A: Unit, B: Unit] folded by node_count   // Coproduct[(A, 1), (B, 1)]
 /// ```
 enum FoldedAlgebraicShape<'a, T> {
@@ -2065,7 +2124,7 @@ enum FoldedAlgebraicShape<'a, T> {
 
 /// One component of a named or positional product.
 ///
-/// ```text
+/// ```rust,ignore
 /// start: usize   // selector: Named(start), ty: usize
 /// ```
 struct ProductComponent {
@@ -2077,7 +2136,7 @@ struct ProductComponent {
 
 /// Projection label belonging to one product component.
 ///
-/// ```text
+/// ```rust,ignore
 /// Span { start: usize }   // Named(start), projected as .start
 /// Pair(u8, u8)            // Positional(0) and Positional(1), projected as .0 and .1
 /// ```
@@ -2100,7 +2159,7 @@ impl ProductSelector {
 
 /// One branch of a coproduct together with its concrete Rust constructor.
 ///
-/// ```text
+/// ```rust,ignore
 /// (Bin) in Expr   // selector: Bin, variant: BinExpr, constructor: Unary
 /// ```
 struct CoproductVariant {
@@ -2122,7 +2181,7 @@ struct CoproductVariant {
 
 /// Concrete Rust constructor shape implementing one coproduct injection.
 ///
-/// ```text
+/// ```rust,ignore
 /// Null               // Unit:      Root::Null
 /// Leaf(String)       // Unary:     Root::Leaf(value)
 /// Pair(u8, u8)       // Tuple(2):  Root::Pair(value.0, value.1), without product variants
@@ -2141,8 +2200,8 @@ enum CoproductConstructor {
 
 /// One constructor occurrence from a payload into the enum currently being lowered.
 ///
-/// ```text
-/// #[strutuct(inclusions = true)] A B(B { C })
+/// ```rust,ignore
+/// #[strutuct(inclusions)] A B(B { C })
 /// // steps [B, C], no parameter, value A::B(AB::C)   =>   fn ABC() -> A
 /// ```
 struct InclusionPath {
@@ -2160,7 +2219,7 @@ struct InclusionPath {
 
 /// One named enum edge and the concatenation order active on that edge.
 ///
-/// ```text
+/// ```rust,ignore
 /// Branch in Root Branch(Branch { Leaf })   // selector: Branch
 /// ```
 struct InclusionStep {
@@ -2423,10 +2482,54 @@ mod tests {
         OptionOverrides::take_from(&mut attrs)
     }
 
+    /// Only caller-written documentation appears on declarations and members.
+    #[test]
+    fn preserves_docs_without_placeholder_descriptions() {
+        let output = strutuct(quote! {
+            /// Root description.
+            pub Root {
+                /// Child field description.
+                pub child: Child { pub value: u8 },
+                pub kind: Kind {
+                    /// Known variant description.
+                    Known,
+                    Unknown,
+                },
+            }
+        });
+        assert!(!output.to_string().contains("generated by"));
+        let file: syn::File = parse2(output).unwrap();
+        let docs = |attrs: &[Attribute]| {
+            attrs
+                .iter()
+                .filter(|attr| attr.path().is_ident("doc"))
+                .count()
+        };
+        for item in file.items {
+            match item {
+                syn::Item::Struct(item) if item.ident == "Root" => {
+                    assert_eq!(docs(&item.attrs), 1);
+                    assert_eq!(docs(&item.fields.iter().next().unwrap().attrs), 1);
+                    assert_eq!(docs(&item.fields.iter().nth(1).unwrap().attrs), 0);
+                }
+                syn::Item::Struct(item) if item.ident == "RootChild" => {
+                    assert_eq!(docs(&item.attrs), 0);
+                    assert_eq!(docs(&item.fields.iter().next().unwrap().attrs), 0);
+                }
+                syn::Item::Enum(item) if item.ident == "RootKind" => {
+                    assert_eq!(docs(&item.attrs), 0);
+                    assert_eq!(docs(&item.variants[0].attrs), 1);
+                    assert_eq!(docs(&item.variants[1].attrs), 0);
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// A visibility entry coexists with named flags and a trailing comma.
     #[test]
     fn parses_visibility_beside_named_options() {
-        let options = overrides("#[strutuct(pub(crate), reverse_concat = true,)]").unwrap();
+        let options = overrides("#[strutuct(pub(crate), reverse_concat,)]").unwrap();
 
         assert!(matches!(
             options.visibility,
@@ -2478,7 +2581,25 @@ mod tests {
         assert!(attrs[1].path().is_ident("serde"));
     }
 
-    /// Unknown, repeated and valueless entries are rejected with specific messages.
+    /// Negated flags disable options enabled by an enclosing declaration.
+    #[test]
+    fn negated_flags_override_inherited_options() {
+        let enabled = Options::default()
+            .with(&overrides("#[strutuct(inclusions, product_variants, reverse_concat)]").unwrap());
+        assert!(enabled.inclusions);
+        assert!(enabled.product_variants);
+        assert!(matches!(enabled.concat_order, ConcatOrder::Reversed));
+
+        let disabled = enabled.with(
+            &overrides("#[strutuct(no_inclusions, no_product_variants, no_reverse_concat)]")
+                .unwrap(),
+        );
+        assert!(!disabled.inclusions);
+        assert!(!disabled.product_variants);
+        assert!(matches!(disabled.concat_order, ConcatOrder::Written));
+    }
+
+    /// Unknown, repeated and boolean-valued entries are rejected with specific messages.
     #[test]
     fn rejects_malformed_options() {
         let message = |source: &str| {
@@ -2491,9 +2612,29 @@ mod tests {
         assert!(message("#[strutuct(public = true)]").contains("unknown `strutuct` option"));
         assert!(message("#[strutuct(pub, priv)]").contains("duplicate `strutuct` visibility"));
         assert!(
-            message("#[strutuct(inclusions = true, inclusions = false)]")
+            message("#[strutuct(inclusions, no_inclusions)]")
                 .contains("duplicate `strutuct` option")
         );
-        assert!(message("#[strutuct(inclusions)]").contains("expected `=`"));
+        for option in ["inclusions", "product_variants", "reverse_concat"] {
+            for value in ["true", "false"] {
+                assert!(
+                    message(&format!("#[strutuct({option} = {value})]"))
+                        .contains("use the bare flag")
+                );
+                assert!(
+                    message(&format!("#[strutuct(no_{option} = {value})]"))
+                        .contains("use the bare flag")
+                );
+            }
+            for flags in [
+                format!("{option}, no_{option}"),
+                format!("no_{option}, {option}"),
+            ] {
+                assert!(
+                    message(&format!("#[strutuct({flags})]"))
+                        .contains("duplicate `strutuct` option")
+                );
+            }
+        }
     }
 }

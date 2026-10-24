@@ -1,23 +1,57 @@
 # Changelog
 
-## Unreleased
+## 0.11.0 - 2026-10-24
+
+### Added
+
+- `#[derive(Log)]` generates an enum of a struct's field names and, for
+  homogeneous fields, `Index` and `IndexMut` implementations. The `#[log(...)]`
+  helper configures the generated enum's name, visibility, and attributes.
+- `#[macro_args(...)]` forwards separate parameters into a function-like macro's
+  input as `@macro_args(...);`. Every function-like macro recognizes that
+  envelope; macros without separate parameters accept only an empty list.
+- Directly importable aliases: `lls!` for `literally_literal_string!`, `disctr`
+  for `discriminated_str`, and `sma!` for `shared_match_arms!`.
+- Short option names: `inc`, `prod`, `rev`, and `exclude`. Flag aliases also
+  accept their `no_` forms and share duplicate validation with full names.
+- `strutuct!` accepts `allow_missing_docs` (`undoc`) to allow undocumented
+  declarations and members throughout a branch, including hoisted nested
+  declarations. Its negated forms are `no_allow_missing_docs` and `no_undoc`.
+- Explicit `struct` and `enum` declaration shapes, ordinary Rust visibility,
+  branch-local configuration, inherited derives, and `#[underive(...)]`
+  handling in the reworked `strutuct!` parser and lowering.
 
 ### Changed
 
-- `#[enum_fn]` takes the method signature as `vis name -> Type`, so the return
-  type no longer reads as the type of the name, and applies the written
-  visibility to the method, which is private without one.
-- The whole-stream macros `literally_literal_string!` and `shared_match_arms!`
-  take their exclusions as the first thing in their own input, ended by a
-  semicolon, as `expand!` already did:
-  `literally_literal_string! { exclude_macros = (raw_tokens); ... }`.
+- **Breaking:** `#[enum_fn]` now takes `visibility name -> Type`, replacing
+  `name: Type`. Methods are private unless a visibility is written.
+- **Breaking:** `strutuct!` declarations and fields are private by default.
+  Use `#[strutuct(pub)]` to make a branch public, or write visibility on the
+  specific declaration or field. The old `public = true/false` option is gone.
+- **Breaking:** ordinary enum tuple and struct variants are preserved by default.
+  Enable `product_variants` (`prod`) for packed product payloads.
+- **Breaking:** `strutuct!` boolean assignments are replaced by bare flags:
+  `inclusions = true` becomes `inclusions`; `inclusions = false` becomes
+  `no_inclusions`. The same convention applies to `product_variants` and
+  `reverse_concat`, including their short aliases.
+- **Breaking:** `strutuct!` preserves supplied documentation without adding
+  placeholder descriptions to declarations, fields, or variants. Normal
+  `missing_docs` lint settings apply; opt out with `undoc` where appropriate.
+- The whole-stream syntax extensions accept exclusions directly in their input,
+  either through the tagged envelope or the existing inline
+  `exclude_macros = (names);` form. The short name `exclude` works in both
+  forms and in `expand!`.
+- `forward_attributes` preserves an existing parameter envelope before forwarded
+  attributes. Place `#[macro_args(...)]` above `#[forward_attributes]`.
+- Expanded rustdoc argument references and book chapters; book highlighting uses
+  the preprocessor's bundled language support instead of checked-in parser binaries.
+- The crate is now dual-licensed under MIT or Apache-2.0.
 
 ### Removed
 
-- The `#[excluded_macros]` attribute, whose only purpose was to carry that one
-  option into the invocation it wrapped.
-- `strutuct!` no longer accepts and discards the shared exclusion option, which
-  its lowering never read.
+- **Breaking:** `#[excluded_macros]` is removed. Use
+  `#[macro_args(exclude_macros = (names))]` or the inline option instead.
+- `strutuct!` no longer accepts the unused shared macro-exclusion option.
 
 ## 0.10.0 - 2026-10-14
 

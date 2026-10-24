@@ -1,6 +1,6 @@
 //! Generates one method from expressions attached directly to enum variants.
 
-use these_macros_should_be_illegal::{enum_fn, strutuct};
+use these_macros_should_be_illegal::enum_fn;
 
 /// Command labels generated from constant, computed, and missing arms.
 #[enum_fn(label -> String)]

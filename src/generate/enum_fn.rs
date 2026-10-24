@@ -6,11 +6,13 @@ use crate::helpers::ungroup;
 use quote::quote;
 use syn::{
     Attribute, Error, Expr, ExprClosure, ExprConst, ExprLit, Fields, Ident, ItemEnum, Lit, LitStr,
-    Member, Pat, PatType, Path, Stmt, Token, Type, Variant, Visibility,
-    ext::IdentExt,
-    parse::{Parse, ParseStream},
-    parse_quote_spanned, parse2,
+    Member, Pat, PatType, Stmt, Type, Variant, ext::IdentExt, parse_quote_spanned, parse2,
     spanned::Spanned,
+};
+
+use syn::{
+    Path, Token, Visibility,
+    parse::{Parse, ParseStream},
 };
 
 /// Parsed accessor name and requested output representation.
@@ -33,20 +35,6 @@ enum MissingDescription {
     /// Use the variant identifier's spelling as a constant value.
     Stringify,
     /// Panic when the accessor reaches the variant.
-    Panic,
-}
-
-/// Operation performed by the generated match arm for one variant.
-enum VariantOutput {
-    /// Evaluate an ordinary Rust expression.
-    Expression(Box<Expr>),
-    /// Read the explicitly selected named or unnamed field.
-    Member(Member),
-    /// Return `None`.
-    None,
-    /// Invoke a closure with every field.
-    Call(Box<ExprClosure>),
-    /// Panic when a variant without an expression is reached.
     Panic,
 }
 
@@ -90,6 +78,20 @@ impl Parse for MissingDescription {
             ))
         }
     }
+}
+
+/// Operation performed by the generated match arm for one variant.
+enum VariantOutput {
+    /// Evaluate an ordinary Rust expression.
+    Expression(Box<Expr>),
+    /// Read the explicitly selected named or unnamed field.
+    Member(Member),
+    /// Return `None`.
+    None,
+    /// Invoke a closure with every field.
+    Call(Box<ExprClosure>),
+    /// Panic when a variant without an expression is reached.
+    Panic,
 }
 
 /// Generates an enum method whose body is a match over its variants.

@@ -12,6 +12,14 @@ the caveats and implementation yapping are further down.
 cargo add these-macros-should-be-illegal
 ```
 
+Short names are exported directly and can be imported without renaming:
+
+| Full name | Short name |
+| --- | --- |
+| `literally_literal_string!` | `lls!` |
+| `discriminated_str` | `disctr` |
+| `shared_match_arms!` | `sma!` |
+
 ## Give an object function-like syntax without erasing its type
 
 `callable` aliases one method of a user-owned trait to the crate's structural
@@ -390,7 +398,7 @@ is private unless a visibility says otherwise, exactly as in ordinary Rust.
 
 Enum variants are written exactly as in Rust and stay ordinary variants:
 
-```text
+```rust
 Name                 unit variant
 Name(), Name(T, U)   tuple-like variant
 Name {}, Name { x: T } struct-like variant
@@ -402,7 +410,7 @@ struct or enum and `Name(...)` declares a tuple struct, both named relative to
 their generated parent. Bars request an exact name instead, and a bar-named
 declaration without a body is a nominal unit type (the `()` case, not `!`):
 
-```text
+```rust
 field: Name { ... }    defines struct or enum ParentName
 field: Name(T, U)      defines tuple struct ParentName
 field: |Type| { ... }  defines Type
@@ -417,7 +425,7 @@ directly inside one are always variants. Keywords never name a declaration, so
 
 Enums also accept three payload shortcuts whose variant name is derived:
 
-```text
+```rust
 Name |Type| { ... }  defines Type and emits Name(Type)
 |Type| { ... }       defines Type and emits TypeParent(Type)
 (Type)               uses Type and becomes TypeParent(Type)
@@ -429,11 +437,11 @@ To have multi-field variants carry one product instead, turn on
 
 ```rust
 strutuct! {
-    #[strutuct(product_variants = true)]
+    #[strutuct(product_variants)]
     enum Value {
         Pair(String, String),
         Span { start: usize, end: usize },
-        #[strutuct(product_variants = false)]
+        #[strutuct(no_product_variants)]
         Plain(String, String),
     }
 }
@@ -441,7 +449,13 @@ strutuct! {
 
 The same attribute before a variant overrides the declaration-wide setting.
 
-`#[strutuct(reverse_concat = true)]` reverses automatically generated names,
+Configuration uses bare flags: `inclusions`, `product_variants`, and
+`reverse_concat` enable options; their `no_` forms disable inherited options.
+All three are disabled by default. Documentation is preserved as supplied,
+without placeholders. The additional `allow_missing_docs` flag (`undoc`) permits
+undocumented declarations and members throughout a generated branch.
+
+`#[strutuct(reverse_concat)]` reverses automatically generated names,
 turning `ParentName` into `NameParent`. The current complete option set is a
 visibility, `inclusions`, `product_variants`, and `reverse_concat`. Options are
 outer attributes, so they go where Rust accepts one: before the root
@@ -501,13 +515,13 @@ Each generated type also gets a constructor macro in Rust's conveniently
 separate macro namespace. Every enum macro eats one path segment and calls the
 next one:
 
-```text
+```rust
 A!(B::C::D(value))
 ```
 
 folds into:
 
-```text
+```rust
 A::B(AB::C(ABC::D(value)))
 ```
 
@@ -515,7 +529,7 @@ A nested struct ends the path and accepts named fields. Boxed and optional edges
 also stop there, so `T*` can express recursion without making the constructor
 macro expand forever. That would be a different kind of illegal.
 
-With `#[strutuct(inclusions = true)]`, enum trees additionally generate consuming
+With `#[strutuct(inclusions)]`, enum trees additionally generate consuming
 free functions for every constructor occurrence. For example,
 `TokenOperatorNot(String) -> Token` composes the `Not` and `Operator`
 injections. Complete occurrence paths keep equal leaf types in different
@@ -535,7 +549,7 @@ let reflected = reflect!(add_one, double; 3);
 `perm!` applies conventional cycle notation to comma-separated token trees and
 fixes every position beyond the largest mentioned index:
 
-```text
+```rust
 perm! { ((1 4 3)), a, b, c, d, e }
     -> c, b, d, a, e
 ```
@@ -588,3 +602,8 @@ cargo test --workspace --all-features --no-fail-fast
 ```
 
 Released through GitHub and crates.io under the [MIT License](LICENSE).
+
+## License
+
+Licensed under either the [MIT license](LICENSE) or the
+[Apache License, Version 2.0](LICENSE-APACHE), at your option.

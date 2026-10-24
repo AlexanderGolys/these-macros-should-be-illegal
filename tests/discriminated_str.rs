@@ -1,9 +1,9 @@
 //! Consumer tests for unique per-variant string discriminants.
 
-use these_macros_should_be_illegal::discriminated_str;
+use these_macros_should_be_illegal::disctr;
 
 /// Tokens whose payloads are deliberately irrelevant to their discriminants.
-#[discriminated_str(name)]
+#[disctr(name)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Token<'a, T>
 where
@@ -62,7 +62,7 @@ fn constructs_values_from_literal_discriminants() {
 /// The enum, inherent method, and constructor macro may all be block-local.
 #[test]
 fn expands_on_block_local_items() {
-    #[discriminated_str(name)]
+    #[disctr(name)]
     enum LocalToken {
         /// The only local token.
         End = "end",

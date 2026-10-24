@@ -37,3 +37,6 @@ BUGS.md
 
 # Local scratch crate
 /playground/
+
+# Local release audit
+/RELEASE-AUDIT.md

@@ -8,6 +8,7 @@ same-name macro which forwards its arguments to that alias. No shared callable
 trait is imposed by this crate.
 
 ```rust
+# #[macro_use] extern crate these_macros_should_be_illegal;
 #[callable(apply)]
 trait Action {
     fn apply(&self, point: usize) -> usize;
@@ -45,6 +46,7 @@ generics, return type, bounds, and async or unsafe behavior are retained.
 Mutable callable methods require a mutable binding:
 
 ```rust
+# #[macro_use] extern crate these_macros_should_be_illegal;
 #[callable(advance)]
 trait Advance {
     fn advance(&mut self, amount: usize) -> usize;

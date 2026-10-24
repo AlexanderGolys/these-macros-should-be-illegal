@@ -46,21 +46,6 @@ enum Case {
     Upper,
 }
 
-impl Case {
-    /// Spells `name` in this case.
-    fn convert(self, name: &str) -> String {
-        match self {
-            Self::Camel => name.to_lower_camel_case(),
-            Self::Pascal => name.to_upper_camel_case(),
-            Self::Snake => name.to_snake_case(),
-            Self::Kebab => name.to_kebab_case(),
-            Self::ScreamingSnake => name.to_shouty_snake_case(),
-            Self::Lower => name.to_lowercase(),
-            Self::Upper => name.to_uppercase(),
-        }
-    }
-}
-
 /// How `stringify_as!` spells its input.
 #[derive(Clone, Copy)]
 enum Spelling {
@@ -91,6 +76,21 @@ impl Parse for Spelling {
     }
 }
 
+impl Case {
+    /// Spells `name` in this case.
+    pub(crate) fn convert(self, name: &str) -> String {
+        match self {
+            Self::Camel => name.to_lower_camel_case(),
+            Self::Pascal => name.to_upper_camel_case(),
+            Self::Snake => name.to_snake_case(),
+            Self::Kebab => name.to_kebab_case(),
+            Self::ScreamingSnake => name.to_shouty_snake_case(),
+            Self::Lower => name.to_lowercase(),
+            Self::Upper => name.to_uppercase(),
+        }
+    }
+}
+
 /// Complete `stringify_as!` input: a spelling option, `;`, and the tokens to spell.
 struct Invocation {
     /// Selected spelling.
@@ -102,8 +102,14 @@ struct Invocation {
 impl Parse for Invocation {
     /// Parses `option; body` without imposing a grammar on the body yet.
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let spelling = input.parse()?;
-        input.parse::<Token![;]>()?;
+        let spelling = match crate::helpers::arguments::input::parse_prefix(input)? {
+            Some(spelling) => spelling,
+            None => {
+                let spelling = input.parse()?;
+                input.parse::<Token![;]>()?;
+                spelling
+            }
+        };
         Ok(Self {
             spelling,
             body: input.parse()?,

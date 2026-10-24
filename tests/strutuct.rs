@@ -1,5 +1,7 @@
 //! Consumer tests for nested algebraic declarations and constructor macros.
 
+#![allow(missing_docs)]
+
 use serde::Deserialize;
 use these_macros_should_be_illegal::{emmun, strutuct};
 
@@ -27,8 +29,7 @@ pub struct Post(pub u8);
 /// Binary-expression payload used to exercise direct construction.
 pub struct Bin(pub u8);
 
-strutuct! {
-    Expr
+strutuct! { Expr
     Unary(Unary { (Pref), (Post) })
     (Bin)
     LitStr(String)
@@ -52,18 +53,18 @@ strutuct! {
     Pair(String, u8)
 }
 
-strutuct! {
-    Outer
+strutuct! { Outer
     Middle(Middle { Inner(Inner { Leaf(Leaf { Done(String) }) }) })
 }
 
 strutuct! {
-    TypedChoices
-    Named |NamedPayload| { A, B }
-    Generated(Generated { A, B })
-    |ImplicitPayload| { A, B }
-    NamedUnit |NamedUnitPayload|
-    |ImplicitUnit|
+    enum TypedChoices {
+        Named |NamedPayload| { A, B }
+        Generated(Generated { A, B })
+        |ImplicitPayload| { A, B }
+        NamedUnit |NamedUnitPayload|
+        |ImplicitUnit|
+    }
 }
 
 strutuct! {
@@ -84,13 +85,13 @@ strutuct! {
 }
 
 strutuct! {
-    #[strutuct(product_variants = false)]
+    #[strutuct(no_product_variants)]
     RustVariants
     Pair(String, u8)
     Struct { x: String, y: u8 }
-    #[strutuct(product_variants = true)]
+    #[strutuct(product_variants)]
     Packed(String, u8)
-    #[strutuct(product_variants = true)]
+    #[strutuct(product_variants)]
     Generated { x: String, y: u8 }
 }
 
@@ -142,7 +143,7 @@ emmun! {
 
 strutuct! {
     #[derive(Debug, PartialEq)]
-    #[strutuct(reverse_concat = true)]
+    #[strutuct(pub, reverse_concat)]
     pub enum Reversed {
         Branch(Branch { Leaf(Leaf { End(String) }) })
     }
@@ -154,11 +155,11 @@ strutuct! {
     struct PrivateDefaults {
         value: u8,
         #[strutuct(pub)]
-        #[strutuct(reverse_concat = true)]
+        #[strutuct(reverse_concat)]
         pub branch: pub enum |BranchChoice| {
             Nested(Nested { Unit })
         },
-        #[strutuct(product_variants = false)]
+        #[strutuct(no_product_variants)]
         pair: enum |LocalProduct| { Pair(u8, u8) },
     }
 }
@@ -177,7 +178,7 @@ strutuct! {
 strutuct! {
     #[derive(Debug, PartialEq)]
     #[repr(C)]
-    #[strutuct(product_variants = false)]
+    #[strutuct(no_product_variants)]
     enum InlineStructVariant {
         Branch {
             child: Child { A, B },
@@ -207,7 +208,7 @@ strutuct! {
 
 strutuct! {
     #[derive(Debug, PartialEq)]
-    #[strutuct(inclusions = true)]
+    #[strutuct(inclusions)]
     Included {
         Branch(Branch { Leaf(String), Empty }),
         Other(Other { Leaf(String) }),
@@ -220,7 +221,7 @@ strutuct! {
 
 strutuct! {
     #[derive(Debug, PartialEq)]
-    #[strutuct(inclusions = true, product_variants = false)]
+    #[strutuct(inclusions, no_product_variants)]
     IncludedRustVariants {
         Pair(String, u8),
         Record { text: String, number: u8 },

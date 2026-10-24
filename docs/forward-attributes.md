@@ -6,16 +6,8 @@ API reference on docs.rs: [`forward_attributes`](https://docs.rs/these-macros-sh
 for any item-position function-like macro. The receiving macro decides what the
 attributes mean.
 
-<div class="highlight-comparison-key">
-  <strong>You write</strong>
-  <strong>Roughly expands to</strong>
-</div>
-
-<div class="highlight-comparison">
-
-<div class="highlight-comparison-pane">
-
-```rust
+```rust,pane="You write"
+# #[macro_use] extern crate these_macros_should_be_illegal;
 #[forward_attributes]
 #[derive(Debug, PartialEq)]
 strutuct! {
@@ -28,11 +20,7 @@ fn main() {
 }
 ```
 
-</div>
-
-<div class="highlight-comparison-pane">
-
-```rust,ignore
+```rust,ignore,pane="Roughly expands to"
 strutuct! {
     #[derive(Debug, PartialEq)]
     ;
@@ -44,10 +32,6 @@ fn main() {
     assert_eq!(format!("{:?}", State::Waiting), "Waiting");
 }
 ```
-
-</div>
-
-</div>
 
 The semicolon distinguishes invocation-wide attributes from attributes that
 were already attached to the first object in the macro input. `strutuct!` and
@@ -71,16 +55,8 @@ procedural macro.
 `forward_attributes` must be the first active attribute. An active attribute
 written before it may expand or fail before forwarding gets a turn:
 
-<div class="highlight-comparison-key">
-  <strong>You write</strong>
-  <strong>What Rust sees first</strong>
-</div>
-
-<div class="highlight-comparison">
-
-<div class="highlight-comparison-pane">
-
-```rust,compile_fail
+```rust,compile_fail,pane="You write"
+# #[macro_use] extern crate these_macros_should_be_illegal;
 #[derive(Debug)]
 #[forward_attributes]
 strutuct! { TooLate { A, B } }
@@ -88,21 +64,13 @@ strutuct! { TooLate { A, B } }
 fn main() {}
 ```
 
-</div>
-
-<div class="highlight-comparison-pane">
-
-```rust,ignore
+```rust,ignore,pane="What Rust sees first"
 // `derive` runs before `forward_attributes`
 // can move it into the macro input.
 compile_error!(
     "derive may only be applied to structs, enums and unions"
 );
 ```
-
-</div>
-
-</div>
 
 Inert attributes such as documentation may precede it and are forwarded too.
 
@@ -114,7 +82,7 @@ macro. The input must still be tokenizable and have balanced delimiters.
 
 Macros opt into this convention by parsing:
 
-```text
+```rust,ignore
 zero or more outer attributes ; ordinary macro input
 ```
 

@@ -4,27 +4,16 @@
 use proc_macro2::TokenStream;
 use quote::{ToTokens, quote};
 use syn::{
-    Attribute, Data, DataStruct, DeriveInput, Error, Fields, Ident, LitStr, Meta, Token, Type,
-    Visibility,
-    ext::IdentExt,
-    parse::{Parse, ParseStream},
-    parse_quote, parse2,
+    Attribute, Data, DataStruct, DeriveInput, Error, Fields, Ident, LitStr, Meta, Type,
+    ext::IdentExt, parse_quote, parse2,
 };
 
 use crate::helpers::ungroup;
 
-/// Prefix of the generated enum's name, read as the logarithm of the struct.
-const DEFAULT_PREFIX: &str = "Log";
-
-/// Name of the helper attribute carrying the generated enum's declaration.
-const HELPER_ATTRIBUTE: &str = "log";
-
-/// Generates the enum of the field names of one struct, and its indexing operator.
-pub fn log(item: TokenStream) -> TokenStream {
-    let result = parse2::<DeriveInput>(item).and_then(generate);
-
-    result.unwrap_or_else(Error::into_compile_error)
-}
+use syn::{
+    Token, Visibility,
+    parse::{Parse, ParseStream},
+};
 
 /// The heading of the generated enum's declaration, written without its body.
 #[derive(Default)]
@@ -35,18 +24,6 @@ struct LogDeclaration {
     visibility: Option<Visibility>,
     /// Name of the generated enum, prefixed to the struct's name where absent.
     name: Option<Ident>,
-}
-
-/// One field of the struct, which is one variant of the generated enum.
-struct LogField {
-    /// Name of the field, spelled the same as the variant naming it.
-    name: Ident,
-    /// Conditional compilation the field and its variant share.
-    conditions: Vec<Attribute>,
-    /// Documentation of the field, where it is documented.
-    documentation: Vec<Attribute>,
-    /// The type the field holds.
-    ty: Type,
 }
 
 impl Parse for LogDeclaration {
@@ -76,6 +53,31 @@ impl Parse for LogDeclaration {
             name,
         })
     }
+}
+
+/// Prefix of the generated enum's name, read as the logarithm of the struct.
+const DEFAULT_PREFIX: &str = "Log";
+
+/// Name of the helper attribute carrying the generated enum's declaration.
+const HELPER_ATTRIBUTE: &str = "log";
+
+/// Generates the enum of the field names of one struct, and its indexing operator.
+pub fn log(item: TokenStream) -> TokenStream {
+    let result = parse2::<DeriveInput>(item).and_then(generate);
+
+    result.unwrap_or_else(Error::into_compile_error)
+}
+
+/// One field of the struct, which is one variant of the generated enum.
+struct LogField {
+    /// Name of the field, spelled the same as the variant naming it.
+    name: Ident,
+    /// Conditional compilation the field and its variant share.
+    conditions: Vec<Attribute>,
+    /// Documentation of the field, where it is documented.
+    documentation: Vec<Attribute>,
+    /// The type the field holds.
+    ty: Type,
 }
 
 /// Generates the index set of one struct, and its evaluation on it.

@@ -1,0 +1,8 @@
+/* Page layout. Kept out of highlight_ts.css, which mdbook-tsitter embeds in a
+   cascade layer that mdBook's own unlayered variables override. */
+:root {
+  /* Two 68-column code panes (the longest example plus two columns), their
+     mdBook padding, and the gap between side-by-side panes. All content shares
+     this measure. */
+  --content-max-width: 119.75rem;
+}

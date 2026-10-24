@@ -4,29 +4,18 @@ use crate::helpers::fresh_name::{fresh_name, written_identifiers};
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use syn::{
-    Error, Expr, Generics, Ident, Item, Lifetime, Token, Type, WherePredicate,
+    Error, Expr, Generics, Ident, Item, Lifetime, Type, WherePredicate, parse_quote, parse2,
+};
+
+use syn::{
+    Token,
     parse::{Parse, ParseStream},
-    parse_quote, parse2,
 };
 
 /// Operator completed from an addition and the negation of its right operand.
 const SUBTRACTION: &str = "Sub";
 /// Operator completed from a scalar multiplication.
 const NEGATION: &str = "Neg";
-/// Name of the generic right operand a completed operator introduces.
-const RIGHT_OPERAND_PARAMETER: &str = "Rhs";
-/// Lifetime of the borrowed left operand a completed operator introduces.
-const OPERAND_LIFETIME: &str = "operand";
-
-/// Adds the operators that follow from the ones a type already implements.
-pub fn complete_ops(arguments: TokenStream, item: TokenStream) -> TokenStream {
-    let result = parse2::<SelectedCompletions>(arguments)
-        .and_then(|selected| parse2::<Item>(item).map(|item| (selected, item)))
-        .and_then(|(selected, item)| expand_completions(&selected, &item));
-
-    result.unwrap_or_else(Error::into_compile_error)
-}
-
 /// One operator to complete, with whatever the completion needs to be stated.
 enum Completion {
     /// `x - v` is `x + (-v)`, for every negatable `v` the type can add.
@@ -118,6 +107,20 @@ impl Parse for SelectedCompletions {
 
         Ok(Self { completions })
     }
+}
+
+/// Name of the generic right operand a completed operator introduces.
+const RIGHT_OPERAND_PARAMETER: &str = "Rhs";
+/// Lifetime of the borrowed left operand a completed operator introduces.
+const OPERAND_LIFETIME: &str = "operand";
+
+/// Adds the operators that follow from the ones a type already implements.
+pub fn complete_ops(arguments: TokenStream, item: TokenStream) -> TokenStream {
+    let result = parse2::<SelectedCompletions>(arguments)
+        .and_then(|selected| parse2::<Item>(item).map(|item| (selected, item)))
+        .and_then(|(selected, item)| expand_completions(&selected, &item));
+
+    result.unwrap_or_else(Error::into_compile_error)
 }
 
 /// Emits the attributed item unchanged, followed by the operators it implies.

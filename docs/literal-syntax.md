@@ -6,32 +6,16 @@ API reference on docs.rs: [`literally_literal_string!`](https://docs.rs/these-ma
 
 `literally_literal_string!` turns `@@"text"` into an owned `String`:
 
-<div class="highlight-comparison-key">
-  <strong>You write</strong>
-  <strong>Roughly expands to</strong>
-</div>
-
-<div class="highlight-comparison">
-
-<div class="highlight-comparison-pane">
-
-```rust
+```rust,pane="You write"
+# #[macro_use] extern crate these_macros_should_be_illegal;
 let greeting: String = literally_literal_string!(@@"hello");
 assert_eq!(greeting, "hello");
 ```
 
-</div>
-
-<div class="highlight-comparison-pane">
-
-```rust,ignore
+```rust,ignore,pane="Roughly expands to"
 let greeting: String = ::std::string::String::from("hello");
 assert_eq!(greeting, "hello");
 ```
-
-</div>
-
-</div>
 
 That spelling is not valid ordinary Rust. It works inside a function-like macro
 because rustc gives the macro its input tokens before parsing them as an
@@ -43,16 +27,7 @@ At item level, invalid syntax must live in a separate file so rustc does not
 parse it first. `expand!` loads an out-of-line module and wraps its body in the
 selected rewriting macros.
 
-<div class="highlight-comparison-key">
-  <strong>You write</strong>
-  <strong>Roughly expands to</strong>
-</div>
-
-<div class="highlight-comparison">
-
-<div class="highlight-comparison-pane">
-
-```rust,ignore
+```rust,ignore,pane="You write"
 expand!(
     literally_literal_string;
     mod experiments;
@@ -64,11 +39,7 @@ pub fn greeting() -> String {
 }
 ```
 
-</div>
-
-<div class="highlight-comparison-pane">
-
-```rust,ignore
+```rust,ignore,pane="Roughly expands to"
 mod experiments {
     pub fn greeting() -> String {
         ::std::string::String::from(
@@ -77,10 +48,6 @@ mod experiments {
     }
 }
 ```
-
-</div>
-
-</div>
 
 Multiple macro paths are applied in their written order. `expand!` currently
 loads one module file; it does not recursively load out-of-line child modules.
@@ -92,16 +59,7 @@ so force a rebuild if an edit appears to be ignored.
 Some macros own private token syntax that another transformation must not
 touch. Configure exact macro names in `expand!`:
 
-<div class="highlight-comparison-key">
-  <strong>You write</strong>
-  <strong>Roughly expands to</strong>
-</div>
-
-<div class="highlight-comparison">
-
-<div class="highlight-comparison-pane">
-
-```rust,ignore
+```rust,ignore,pane="You write"
 expand!(
     literally_literal_string,
     exclude_macros = (raw_tokens);
@@ -113,20 +71,12 @@ raw_tokens!(@@"untouched");
 let text = @@"rewritten";
 ```
 
-</div>
-
-<div class="highlight-comparison-pane">
-
-```rust,ignore
+```rust,ignore,pane="Roughly expands to"
 mod experiments {
     raw_tokens!(@@"untouched");
     let text = ::std::string::String::from("rewritten");
 }
 ```
-
-</div>
-
-</div>
 
 A whole-stream macro invoked directly takes the same option as the first thing
 in its input, ended by a semicolon:

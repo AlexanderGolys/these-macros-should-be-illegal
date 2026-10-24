@@ -6,16 +6,8 @@ Assigns every enum variant one unique string literal. The generated method maps
 values to strings; a same-name macro maps literals and payloads back to variant
 constructors.
 
-<div class="highlight-comparison-key">
-  <strong>You write</strong>
-  <strong>Roughly expands to</strong>
-</div>
-
-<div class="highlight-comparison">
-
-<div class="highlight-comparison-pane">
-
-```rust
+```rust,pane="You write"
+# #[macro_use] extern crate these_macros_should_be_illegal;
 #[discriminated_str(name)]
 enum Token {
     Ident(String) = "ident",
@@ -29,11 +21,7 @@ fn main() {
 }
 ```
 
-</div>
-
-<div class="highlight-comparison-pane">
-
-```rust,ignore
+```rust,ignore,pane="Roughly expands to"
 enum Token {
     Ident(String),
     End,
@@ -55,22 +43,10 @@ macro_rules! Token {
 }
 ```
 
-</div>
-
-</div>
-
 The constructor macro follows the original variant shape:
 
-<div class="highlight-comparison-key">
-  <strong>You write</strong>
-  <strong>Roughly expands to</strong>
-</div>
-
-<div class="highlight-comparison">
-
-<div class="highlight-comparison-pane">
-
-```rust
+```rust,pane="You write"
+# #[macro_use] extern crate these_macros_should_be_illegal;
 #[discriminated_str(code)]
 enum Error {
     Io(std::io::Error) = "io",
@@ -84,11 +60,7 @@ fn main() {
 }
 ```
 
-</div>
-
-<div class="highlight-comparison-pane">
-
-```rust,ignore
+```rust,ignore,pane="Roughly expands to"
 Error!("io", source)
 // Error::Io(source)
 
@@ -98,10 +70,6 @@ Error!("parse", offset: 17)
 Error!("unknown")
 // Error::Unknown
 ```
-
-</div>
-
-</div>
 
 Every variant must have a string literal, and literals must be unique. The
 constructor direction deliberately accepts literals rather than runtime

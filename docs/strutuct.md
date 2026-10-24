@@ -7,26 +7,16 @@ ordinary Rust declarations in dependency order. Generated declarations and
 fields are private unless a visibility says otherwise. `emmun!` is an exact
 alias with the same syntax.
 
-<div class="highlight-comparison-key">
-  <strong>You write</strong>
-  <strong>Roughly expands to</strong>
-</div>
-
-<div class="highlight-comparison">
-<div class="highlight-comparison-pane">
-
-```rust
+```rust,pane="You write"
+# #[macro_use] extern crate these_macros_should_be_illegal;
 strutuct! {
     Request
     method: Method { Get, Post },
     body: String?,
 }
 ```
-</div>
 
-<div class="highlight-comparison-pane">
-
-```rust,ignore
+```rust,ignore,pane="Roughly expands to"
 enum RequestMethod {
     Get,
     Post,
@@ -40,22 +30,12 @@ struct Request {
 // RequestMethod!(...) and Request!(...)
 // constructor macros are generated too.
 ```
-</div>
-</div>
 
 Outer attributes can configure the complete generated family through
 [`forward_attributes`](forward-attributes.md):
 
-<div class="highlight-comparison-key">
-  <strong>You write</strong>
-  <strong>Roughly expands to</strong>
-</div>
-
-<div class="highlight-comparison">
-
-<div class="highlight-comparison-pane">
-
-```rust
+```rust,pane="You write"
+# #[macro_use] extern crate these_macros_should_be_illegal;
 #[forward_attributes]
 #[derive(Debug, PartialEq)]
 strutuct! {
@@ -67,11 +47,7 @@ fn main() {
 }
 ```
 
-</div>
-
-<div class="highlight-comparison-pane">
-
-```rust,ignore
+```rust,ignore,pane="Roughly expands to"
 #[derive(Debug, PartialEq)]
 enum Forwarded {
     First,
@@ -83,20 +59,8 @@ fn main() {
 }
 ```
 
-</div>
-
-</div>
-
-<div class="highlight-comparison-key">
-  <strong>You write</strong>
-  <strong>Roughly expands to</strong>
-</div>
-
-<div class="highlight-comparison">
-
-<div class="highlight-comparison-pane">
-
-```rust
+```rust,pane="You write"
+# #[macro_use] extern crate these_macros_should_be_illegal;
 strutuct! {
     Request
     method: Method { Get, Post, Delete },
@@ -111,11 +75,7 @@ let request = Request!(
 assert!(matches!(request.method, RequestMethod::Post));
 ```
 
-</div>
-
-<div class="highlight-comparison-pane">
-
-```rust,ignore
+```rust,ignore,pane="Roughly expands to"
 enum RequestMethod {
     Get,
     Post,
@@ -135,10 +95,6 @@ let request = Request {
 assert!(matches!(request.method, RequestMethod::Post));
 ```
 
-</div>
-
-</div>
-
 This generates the `RequestMethod` enum, the `Request` struct, and same-name
 constructor macros. Braced `Method { ... }` is a relative generated name;
 write `|Method| { ... }` when the generated enum must be named exactly `Method`.
@@ -155,6 +111,7 @@ A parenthesized body produces a tuple struct; a nonempty braced body produces a
 named-field struct or an enum:
 
 ```rust
+# #[macro_use] extern crate these_macros_should_be_illegal;
 strutuct! {
     struct Record {
         value: u8,
@@ -185,6 +142,7 @@ They do not force a body to have that shape.
 A root declaration cannot be empty or unit-like:
 
 ```rust,compile_fail
+# #[macro_use] extern crate these_macros_should_be_illegal;
 strutuct! {
     Empty {}
 }
@@ -193,6 +151,7 @@ strutuct! {
 A written keyword must agree with the inferred body:
 
 ```rust,compile_fail
+# #[macro_use] extern crate these_macros_should_be_illegal;
 strutuct! {
     enum NotAnEnum {
         value: u8,
@@ -201,6 +160,7 @@ strutuct! {
 ```
 
 ```rust,compile_fail
+# #[macro_use] extern crate these_macros_should_be_illegal;
 strutuct! {
     struct NotAStruct {
         First,
@@ -216,6 +176,7 @@ field. A field type may itself declare a relative type, an exactly named type,
 or an exactly named unit struct:
 
 ```rust
+# #[macro_use] extern crate these_macros_should_be_illegal;
 pub struct Existing;
 
 strutuct! {
@@ -239,6 +200,7 @@ Nested bodies use the same inference rules as roots. Consequently a field may
 declare any shape:
 
 ```rust
+# #[macro_use] extern crate these_macros_should_be_illegal;
 pub struct Existing;
 
 strutuct! {
@@ -256,6 +218,7 @@ Struct fields require commas. Once a body is inferred as a struct, an
 enum-shaped member cannot be mixed into it:
 
 ```rust,compile_fail
+# #[macro_use] extern crate these_macros_should_be_illegal;
 strutuct! {
     Mixed {
         value: u8,
@@ -268,6 +231,7 @@ A relative name requires a nonempty braced body. Only an exact `|Name|` may
 declare a unit struct:
 
 ```rust,compile_fail
+# #[macro_use] extern crate these_macros_should_be_illegal;
 strutuct! {
     Holder {
         marker: Marker {},
@@ -281,6 +245,7 @@ A parenthesized body declares a tuple struct, at the root and wherever a type is
 expected. Each element is a type, which may itself declare nested types:
 
 ```rust
+# #[macro_use] extern crate these_macros_should_be_illegal;
 pub struct Left;
 pub struct Right;
 
@@ -311,6 +276,7 @@ As in Rust, attributes and visibility before a tuple element belong to that
 field, exactly as they do before a named field:
 
 ```rust
+# #[macro_use] extern crate these_macros_should_be_illegal;
 pub struct Left;
 
 strutuct! {
@@ -332,6 +298,7 @@ Braces never declare a tuple struct; a parenthesized member inside braces is the
 implicit enum-variant form, which accepts exactly one type:
 
 ```rust,compile_fail
+# #[macro_use] extern crate these_macros_should_be_illegal;
 strutuct! {
     NotATuple {
         (u8, u16)
@@ -344,6 +311,7 @@ strutuct! {
 Enum variants are written as in Rust and stay ordinary Rust variants:
 
 ```rust
+# #[macro_use] extern crate these_macros_should_be_illegal;
 pub struct Existing;
 
 strutuct! {
@@ -369,7 +337,7 @@ strutuct! {
 
 The forms mean:
 
-```text
+```rust,ignore
 Unit                          unit variant
 EmptyTuple()                  empty tuple-like variant
 ExistingPayload(Existing)     tuple-like variant using an existing type
@@ -398,6 +366,7 @@ Commas between enum variants are optional when the next variant is already
 structurally recognizable:
 
 ```rust
+# #[macro_use] extern crate these_macros_should_be_illegal;
 pub struct Existing;
 
 strutuct! {
@@ -418,6 +387,7 @@ Braces after a variant name hold named fields only, as in Rust. Write a nested
 enum as a type inside parentheses instead:
 
 ```rust,compile_fail
+# #[macro_use] extern crate these_macros_should_be_illegal;
 strutuct! {
     NestedWithoutParentheses {
         Nested { First, Second }
@@ -428,6 +398,7 @@ strutuct! {
 An implicit parenthesized variant accepts exactly one type:
 
 ```rust,compile_fail
+# #[macro_use] extern crate these_macros_should_be_illegal;
 strutuct! {
     BadImplicit {
         (u8, u16)
@@ -440,6 +411,7 @@ Its type must also have a final path segment from which a variant name can be
 formed. Name a non-path payload explicitly:
 
 ```rust,compile_fail
+# #[macro_use] extern crate these_macros_should_be_illegal;
 strutuct! {
     NoInferredName {
         ((u8, u16))
@@ -451,6 +423,7 @@ Parenthesized variant fields are followed by nothing. The former contextual
 spellings are rejected:
 
 ```rust,compile_fail
+# #[macro_use] extern crate these_macros_should_be_illegal;
 strutuct! {
     OldSpelling {
         Named(Payload) { First, Second }
@@ -459,6 +432,7 @@ strutuct! {
 ```
 
 ```rust,compile_fail
+# #[macro_use] extern crate these_macros_should_be_illegal;
 strutuct! {
     OldImplicit {
         (Payload) { First, Second }
@@ -470,6 +444,7 @@ Rust-style enum discriminants are not part of the `strutuct!` declaration
 grammar:
 
 ```rust,compile_fail
+# #[macro_use] extern crate these_macros_should_be_illegal;
 strutuct! {
     Discriminants {
         First = 1,
@@ -484,6 +459,7 @@ An unbarred nested declaration name is relative to its generated parent.
 Nesting continues to concatenate names:
 
 ```rust
+# #[macro_use] extern crate these_macros_should_be_illegal;
 strutuct! {
     Root {
         Relative(Relative {
@@ -502,6 +478,7 @@ so the other branch declares `Exact` and `ExactLeaf`.
 An exact unit declaration is legal only where a nested type is expected:
 
 ```rust
+# #[macro_use] extern crate these_macros_should_be_illegal;
 strutuct! {
     Holder {
         marker: |Marker|,
@@ -514,6 +491,7 @@ strutuct! {
 The root name is already exact and is written without bars:
 
 ```rust,compile_fail
+# #[macro_use] extern crate these_macros_should_be_illegal;
 strutuct! {
     |Root|
 }
@@ -523,6 +501,7 @@ An exact name is one identifier, not a path, and generated declarations do not
 accept generic parameter, bound, or `where` clauses:
 
 ```rust,compile_fail
+# #[macro_use] extern crate these_macros_should_be_illegal;
 strutuct! {
     Generic<T> {
         value: T,
@@ -537,6 +516,7 @@ declarations. A declaration keyword may be added before an inline declaration
 to validate its inferred shape:
 
 ```rust
+# #[macro_use] extern crate these_macros_should_be_illegal;
 #[derive(Debug)]
 pub struct Existing;
 
@@ -562,6 +542,7 @@ targets.
 The keyword is still only a validator:
 
 ```rust,compile_fail
+# #[macro_use] extern crate these_macros_should_be_illegal;
 strutuct! {
     Root {
         choice: struct Choice { First, Second },
@@ -578,6 +559,7 @@ As in Rust, a variant has no visibility of its own; it always shares its enum's.
 Write the visibility of a generated payload before the payload type:
 
 ```rust
+# #[macro_use] extern crate these_macros_should_be_illegal;
 strutuct! {
     enum Choice {
         Branch(priv Branch { A, B }),
@@ -590,6 +572,7 @@ A leading `|Payload|` member is the payload declaration itself, so its header
 may carry the payload's visibility. Before a variant name it is rejected:
 
 ```rust,compile_fail
+# #[macro_use] extern crate these_macros_should_be_illegal;
 strutuct! {
     VisibilityOnVariants {
         // error: a variant takes no visibility
@@ -602,6 +585,7 @@ A shape keyword decorates any payload the member generates, relative or exact,
 and is checked against the shape inferred from its body:
 
 ```rust
+# #[macro_use] extern crate these_macros_should_be_illegal;
 strutuct! {
     ExactPayloadWithKeyword {
         enum |Payload| { First, Second },
@@ -626,6 +610,7 @@ The parser resolves every declaration body in this order:
 The important neighboring forms are therefore:
 
 ```rust
+# #[macro_use] extern crate these_macros_should_be_illegal;
 pub struct Existing;
 
 strutuct! { Named { value: Existing } }
@@ -660,16 +645,8 @@ The root body may either follow its name directly or use ordinary declaration
 braces. Optional `struct` and `enum` keywords make the input look more like Rust;
 shape inference still decides the output, and a mismatched keyword is diagnosed:
 
-<div class="highlight-comparison-key">
-  <strong>You write</strong>
-  <strong>Roughly expands to</strong>
-</div>
-
-<div class="highlight-comparison">
-
-<div class="highlight-comparison-pane">
-
-```rust
+```rust,pane="You write"
+# #[macro_use] extern crate these_macros_should_be_illegal;
 strutuct! {
     pub struct Request {
         method: enum Method { Get, Post, Delete },
@@ -678,11 +655,7 @@ strutuct! {
 }
 ```
 
-</div>
-
-<div class="highlight-comparison-pane">
-
-```rust,ignore
+```rust,ignore,pane="Roughly expands to"
 enum RequestMethod {
     Get,
     Post,
@@ -694,10 +667,6 @@ pub struct Request {
     body: Option<String>,
 }
 ```
-
-</div>
-
-</div>
 
 Standard Rust visibility forms and `priv` are accepted before generated
 declarations and named fields, where they mean what they mean in Rust. Written
@@ -715,7 +684,7 @@ element type in its own field or tuple element instead.
 Variants follow Rust; new types are declared only in type positions. Vertical
 bars declare the generated payload type's exact name.
 
-```text
+```rust,ignore
 Name                  stays Name
 Name(T, U)            stays Name(T, U)
 Name { x: T }         stays Name { x: T }
@@ -735,16 +704,8 @@ and `field: Name(...)` generate `ParentName`, and `field: |Type| { ... }`
 generates the exact name `Type`. The bar spelling also generates an exact unit field type without a
 body:
 
-<div class="highlight-comparison-key">
-  <strong>You write</strong>
-  <strong>Roughly expands to</strong>
-</div>
-
-<div class="highlight-comparison">
-
-<div class="highlight-comparison-pane">
-
-```rust
+```rust,pane="You write"
+# #[macro_use] extern crate these_macros_should_be_illegal;
 strutuct! {
     State
     marker: |EmptyState|,
@@ -753,11 +714,7 @@ strutuct! {
 let state = State!(marker: EmptyState);
 ```
 
-</div>
-
-<div class="highlight-comparison-pane">
-
-```rust,ignore
+```rust,ignore,pane="Roughly expands to"
 struct EmptyState;
 
 struct State {
@@ -769,42 +726,26 @@ let state = State {
 };
 ```
 
-</div>
-
-</div>
-
 ## Products and existing Rust types
 
 By default, variants stay exactly as written. With `product_variants`, a
 multi-field tuple-like variant carries one tuple product, and a struct-like
 variant carries a generated payload struct:
 
-<div class="highlight-comparison-key">
-  <strong>You write</strong>
-  <strong>Roughly expands to</strong>
-</div>
-
-<div class="highlight-comparison">
-
-<div class="highlight-comparison-pane">
-
-```rust
+```rust,pane="You write"
+# #[macro_use] extern crate these_macros_should_be_illegal;
 strutuct! {
-    #[strutuct(product_variants = true)]
+    #[strutuct(product_variants)]
     enum Value {
         Pair(String, String),
         Span { start: usize, end: usize },
-        #[strutuct(product_variants = false)]
+        #[strutuct(no_product_variants)]
         Plain(String, String),
     }
 }
 ```
 
-</div>
-
-<div class="highlight-comparison-pane">
-
-```rust,ignore
+```rust,ignore,pane="Roughly expands to"
 struct ValueSpan {
     start: usize,
     end: usize,
@@ -816,10 +757,6 @@ enum Value {
     Plain(String, String),
 }
 ```
-
-</div>
-
-</div>
 
 The same configuration attribute before a variant overrides the family
 setting for that variant.
@@ -838,18 +775,10 @@ generated below it, while siblings keep their surrounding configuration. Use
 [`forward_attributes`](forward-attributes.md) to write the root options outside
 the invocation:
 
-<div class="highlight-comparison-key">
-  <strong>You write</strong>
-  <strong>Roughly expands to</strong>
-</div>
-
-<div class="highlight-comparison">
-
-<div class="highlight-comparison-pane">
-
-```rust
+```rust,pane="You write"
+# #[macro_use] extern crate these_macros_should_be_illegal;
 strutuct! {
-    #[strutuct(reverse_concat = true)]
+    #[strutuct(reverse_concat)]
     struct Syntax {
         hidden: enum Hidden { A, B },
         #[strutuct(pub)]
@@ -858,11 +787,7 @@ strutuct! {
 }
 ```
 
-</div>
-
-<div class="highlight-comparison-pane">
-
-```rust,ignore
+```rust,ignore,pane="Roughly expands to"
 enum HiddenSyntax {
     A,
     B,
@@ -879,22 +804,29 @@ struct Syntax {
 }
 ```
 
-</div>
-
-</div>
-
 The available options are:
 
 - a visibility — `pub`, a restricted `pub(...)`, or `priv` — selects the
   visibility of that object and of every declaration and field generated below
   it; without one, everything generated is private, as in ordinary Rust;
-- `inclusions = true | false` generates consuming functions for enum constructor
+- `inclusions` generates consuming functions for enum constructor
   paths; it is disabled by default;
-- `product_variants = true | false` packs multi-field and struct-like variants
+- `product_variants` packs multi-field and struct-like variants
   into one product payload; it is disabled by default;
-- `reverse_concat = true | false` reverses every automatically concatenated
+- `reverse_concat` reverses every automatically concatenated
   name in that branch. For example, `ParentName` becomes `NameParent`, while
   explicit names between `|...|` stay unchanged.
+
+Each flag enables its option; `no_inclusions`, `no_product_variants`, and
+`no_reverse_concat` explicitly disable them in a branch. All three options are
+disabled by default. Their short names are `inc`, `prod`, and `rev`;
+`no_inc`, `no_prod`, and `no_rev` disable the corresponding options. Full
+and short spellings refer to the same option when checking duplicates. Use bare names, without boolean assignments. Opposite
+forms of the same flag in one argument list are rejected as duplicates.
+
+`allow_missing_docs` (`undoc`) permits undocumented declarations and members
+throughout a branch; it is disabled by default. Its negated forms are
+`no_allow_missing_docs` and `no_undoc`.
 
 These are the complete options currently implemented. More can be added without
 changing the declaration grammar.
@@ -906,16 +838,8 @@ or field, a visibility is that object's own and nothing else's. Written as an
 option, it is the default for the whole branch underneath, and any visibility
 written inside that branch wins locally without disturbing what it contains:
 
-<div class="highlight-comparison-key">
-  <strong>You write</strong>
-  <strong>Roughly expands to</strong>
-</div>
-
-<div class="highlight-comparison">
-
-<div class="highlight-comparison-pane">
-
-```rust
+```rust,pane="You write"
+# #[macro_use] extern crate these_macros_should_be_illegal;
 strutuct! {
     #[strutuct(pub(crate))]
     struct Request {
@@ -927,11 +851,7 @@ strutuct! {
 }
 ```
 
-</div>
-
-<div class="highlight-comparison-pane">
-
-```rust,ignore
+```rust,ignore,pane="Roughly expands to"
 pub(crate) enum RequestMethod {
     Get,
     Post,
@@ -947,10 +867,6 @@ pub(crate) struct Request {
 }
 ```
 
-</div>
-
-</div>
-
 The `priv` before `secret` hides that one field; `RequestSecret` and its `token`
 keep the inherited `pub(crate)`. Writing `priv` before the declaration instead,
 as in `secret: priv Secret { ... }`, hides the generated struct while leaving
@@ -961,6 +877,7 @@ rejected. Configure the enclosing field or variant instead; an explicit
 visibility on the field keeps the two apart when they should differ:
 
 ```rust,compile_fail
+# #[macro_use] extern crate these_macros_should_be_illegal;
 strutuct! {
     struct Holder {
         // error: `#[strutuct(...)]` cannot configure a type
@@ -970,6 +887,7 @@ strutuct! {
 ```
 
 ```rust
+# #[macro_use] extern crate these_macros_should_be_illegal;
 strutuct! {
     struct Holder {
         #[strutuct(pub)]
@@ -991,9 +909,19 @@ resolved consistently in favor of `strutuct!` rather than guessed from intent.
 
 Generated declarations carry `#[allow(dead_code)]`, because a complete algebraic
 hierarchy commonly contains types, fields, or variants that one consumer does
-not use. Generated constructor macros similarly carry
-`#[allow(unused_macros)]`. Every generated item already has synthetic
-documentation, so `missing_docs` does not need suppression. Every binding
+not use. Generated enums also allow `clippy::enum_variant_names`, since the
+names of implicit variants are derived from their payloads and may repeat the
+enum's name. Generated constructor macros similarly carry
+`#[allow(unused_macros)]`. Documentation on declarations, fields, and variants
+is preserved as written, without placeholder descriptions. The normal
+`missing_docs` lint applies. Enable `#[strutuct(allow_missing_docs)]`, or its
+short form `#[strutuct(undoc)]`, to add `#[allow(missing_docs)]` throughout a
+branch, including hoisted nested declarations. The same option is available
+through `#[macro_args(...)]` or a direct `@macro_args(...);` prefix.
+`no_allow_missing_docs` (`no_undoc`) stops inheriting this option in a branch;
+ordinary Rust lint inheritance within a declaration still applies. Constructor
+macros and inclusion functions retain descriptions of their behavior.
+Every binding
 generated for an inclusion function is consumed, so `unused_variables` does
 not need suppression either. User attributes
 are emitted after the generated declaration guard, so a local
@@ -1023,16 +951,8 @@ families exclusive in both Rust's type and macro namespaces.
 A `derive` before an inline generated struct field adds traits for that
 declaration and every generated declaration below it:
 
-<div class="highlight-comparison-key">
-  <strong>You write</strong>
-  <strong>Roughly expands to</strong>
-</div>
-
-<div class="highlight-comparison">
-
-<div class="highlight-comparison-pane">
-
-```rust
+```rust,pane="You write"
+# #[macro_use] extern crate these_macros_should_be_illegal;
 strutuct! {
     #[derive(Debug, Clone, PartialEq, Eq)]
     Token
@@ -1041,11 +961,7 @@ strutuct! {
 }
 ```
 
-</div>
-
-<div class="highlight-comparison-pane">
-
-```rust,ignore
+```rust,ignore,pane="Roughly expands to"
 #[derive(Debug, Clone, PartialEq, Eq, Copy, Hash)]
 enum TokenKind {
     String,
@@ -1058,10 +974,6 @@ struct Token {
 }
 ```
 
-</div>
-
-</div>
-
 Here `TokenKind` retains the four inherited traits and additionally derives
 `Copy` and `Hash`. Repeated traits are deduplicated. For `Default`, select an
 enum's default variant with Rust's ordinary `#[default]` attribute.
@@ -1070,16 +982,8 @@ enum's default variant with Rust's ordinary `#[default]` attribute.
 removes matching paths after inherited and local derives are merged, ignores
 paths that were absent, and propagates the reduced derive list further down:
 
-<div class="highlight-comparison-key">
-  <strong>You write</strong>
-  <strong>Roughly expands to</strong>
-</div>
-
-<div class="highlight-comparison">
-
-<div class="highlight-comparison-pane">
-
-```rust
+```rust,pane="You write"
+# #[macro_use] extern crate these_macros_should_be_illegal;
 strutuct! {
     #[derive(Debug, Clone, Default)]
     Settings
@@ -1088,11 +992,7 @@ strutuct! {
 }
 ```
 
-</div>
-
-<div class="highlight-comparison-pane">
-
-```rust,ignore
+```rust,ignore,pane="Roughly expands to"
 #[derive(Debug, Clone)]
 enum SettingsModeLevel {
     Low,
@@ -1111,26 +1011,14 @@ struct Settings {
 }
 ```
 
-</div>
-
-</div>
-
 Neither enum has a natural default variant, and `Option<SettingsMode>` defaults
 to `None` without one, so only `Settings` keeps `Default`.
 
 Put documentation and other root attributes inside the macro, immediately
 before the generated type's name:
 
-<div class="highlight-comparison-key">
-  <strong>You write</strong>
-  <strong>Roughly expands to</strong>
-</div>
-
-<div class="highlight-comparison">
-
-<div class="highlight-comparison-pane">
-
-```rust
+```rust,pane="You write"
+# #[macro_use] extern crate these_macros_should_be_illegal;
 strutuct! {
     /// A literal token recognized by the parser.
     Literal
@@ -1139,21 +1027,13 @@ strutuct! {
 }
 ```
 
-</div>
-
-<div class="highlight-comparison-pane">
-
-```rust,ignore
+```rust,ignore,pane="Roughly expands to"
 /// A literal token recognized by the parser.
 enum Literal {
     String,
     Integer,
 }
 ```
-
-</div>
-
-</div>
 
 A doc comment written above a bare `strutuct!` belongs to the macro invocation
 itself. Put [`forward_attributes`](forward-attributes.md) before the invocation's
@@ -1164,50 +1044,25 @@ through the generated family.
 
 Generated enum macros consume nested path segments recursively. Conceptually:
 
-<div class="highlight-comparison-key">
-  <strong>You write</strong>
-  <strong>Roughly expands to</strong>
-</div>
-
-<div class="highlight-comparison">
-
-<div class="highlight-comparison-pane">
-
-```text
+```rust,ignore,pane="You write"
 A!(B::C::D(value))
 ```
 
-</div>
-
-<div class="highlight-comparison-pane">
-
-```text
+```rust,ignore,pane="Roughly expands to"
 A::B(AB::C(ABC::D(value)))
 ```
-
-</div>
-
-</div>
 
 A generated struct or tuple ends the path and accepts its corresponding fields.
 
 ## Enum inclusions
 
-Set `inclusions = true` to generate the canonical consuming injection for every
+Set `inclusions` to generate the canonical consuming injection for every
 constructor occurrence in an enum tree:
 
-<div class="highlight-comparison-key">
-  <strong>You write</strong>
-  <strong>Roughly expands to</strong>
-</div>
-
-<div class="highlight-comparison">
-
-<div class="highlight-comparison-pane">
-
-```rust
+```rust,pane="You write"
+# #[macro_use] extern crate these_macros_should_be_illegal;
 strutuct! {
-    #[strutuct(inclusions = true)]
+    #[strutuct(inclusions)]
     Token {
         Operator(Operator { Not(String), Plus }),
         Keyword(Keyword { Not(String) }),
@@ -1221,11 +1076,7 @@ assert!(matches!(
 ));
 ```
 
-</div>
-
-<div class="highlight-comparison-pane">
-
-```rust,ignore
+```rust,ignore,pane="Roughly expands to"
 enum TokenOperator {
     Not(String),
     Plus,
@@ -1261,10 +1112,6 @@ fn TokenKeywordNot(value: String) -> Token {
 }
 ```
 
-</div>
-
-</div>
-
 Names encode the complete constructor occurrence, not merely the endpoint type.
 Consequently, equal leaf types in distinct branches produce distinct functions
 such as `TokenOperatorNot` and `TokenKeywordNot`. Unit variants produce
@@ -1274,7 +1121,7 @@ root enum.
 Joining proceeds only through nested enums. Products, generic containers, and
 postfix `?` or `*` wrappers are boundaries; an enum below such a boundary keeps
 its own independently generated inclusions instead. A branch-local
-`#[strutuct(inclusions = false)]` stops that branch, while a local `true` can
+`#[strutuct(no_inclusions)]` stops that branch, while a local `inclusions` flag can
 enable one branch when the surrounding declaration leaves the feature off.
 
 For a chain of depth `N`, the macro emits `N` functions. Their composed bodies

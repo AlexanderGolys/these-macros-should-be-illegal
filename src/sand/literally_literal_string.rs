@@ -5,8 +5,9 @@ use quote::quote;
 use syn::{Error, LitStr, parse2};
 
 #[cfg(test)]
-use crate::helpers::preprocessing::ExpansionConfig;
-use crate::helpers::preprocessing::{is_joint_punctuation, is_punctuation, split_option_prefix};
+use crate::helpers::arguments::rewriting::Arguments as ExpansionConfig;
+use crate::helpers::arguments::rewriting::split_option_prefix;
+use crate::helpers::preprocessing::{is_joint_punctuation, is_punctuation};
 
 /// Rewrites extended literal-string syntax in a procedural macro's input.
 pub fn literally_literal_string(input: TokenStream) -> TokenStream {
@@ -81,6 +82,18 @@ mod tests {
         let original = input.to_string();
 
         assert_eq!(rewrite_all(input).to_string(), original);
+    }
+
+    /// Nested macro parameters stay opaque while their body is rewritten.
+    #[test]
+    fn leaves_nested_macro_parameters_opaque() {
+        let input = flust(r#"nested! { @macro_args(@@"setting"); @@"body" }"#);
+        let mut expected = flust(r#"@macro_args(@@"setting");"#);
+        expected.extend(quote!(::std::string::String::from("body")));
+        assert_eq!(
+            rewrite_all(input).to_string(),
+            quote!(nested! { #expected }).to_string()
+        );
     }
 
     /// Rewrites declarative macro bodies unless `macro_rules` is excluded.

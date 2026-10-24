@@ -1,7 +1,17 @@
-//! Argument grammars shared by attribute macros.
+//! Shared argument grammars and parameter transport.
 //!
-//! Each grammar accepts one optional trailing comma; anything left over is
-//! rejected by `syn::parse2` itself.
+//! Macro-specific argument types and their `syn::parse::Parse` implementations
+//! live beside their macro implementation. This module contains only grammars
+//! reused by multiple macros and the common tagged input envelope.
+//!
+//! `callable` and `discriminated_str` (including `disctr`) share [`MethodName`].
+//! Macros without separate parameters share [`NoArguments`]. The recursive
+//! syntax extensions share [`rewriting`], including their `lls` and `sma`
+//! aliases. Attribute arguments are parsed directly; function-like arguments
+//! reach their parser through [`input`].
+
+pub(crate) mod input;
+pub(crate) mod rewriting;
 
 use syn::{
     Ident, Path, Token,
@@ -23,7 +33,7 @@ pub(crate) fn reject_macro_call(input: ParseStream, expected: &str) -> syn::Resu
     Ok(())
 }
 
-/// Empty argument list of an attribute whose item already says everything.
+/// Empty argument list of a macro whose body already says everything.
 pub(crate) struct NoArguments;
 
 impl Parse for NoArguments {
@@ -32,7 +42,7 @@ impl Parse for NoArguments {
         if input.is_empty() {
             Ok(Self)
         } else {
-            Err(input.error("this attribute takes no arguments"))
+            Err(input.error("this macro takes no arguments"))
         }
     }
 }

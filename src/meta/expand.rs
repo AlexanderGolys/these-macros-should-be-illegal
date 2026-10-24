@@ -5,9 +5,9 @@ use std::{fs, path::PathBuf};
 use proc_macro2::{Delimiter, LexError, Spacing, TokenStream, TokenTree, fallback};
 use quote::quote;
 use syn::{
-    Error, Expr, ExprLit, ItemMod, Lit, Meta, Path, Token,
+    Error, Expr, ExprLit, ItemMod, Lit, Meta, Token,
     ext::IdentExt,
-    parse::{Parse, ParseStream, Parser},
+    parse::{Parse, ParseStream},
     parse2,
 };
 
@@ -15,8 +15,10 @@ use TokenTree::{Group as GroupTT, Ident as IdentTT, Punct as PunctTT};
 
 use super::reflect::invoke;
 
-use crate::helpers::preprocessing::{ExpansionConfig, parse_config_option};
 use crate::helpers::ungroup;
+
+use crate::helpers::arguments::rewriting::{Arguments as ExpansionConfig, parse_config_option};
+use syn::{Path, parse::Parser};
 
 /// Macro paths and shared options supplied before the module declaration.
 struct Arguments {
@@ -24,14 +26,6 @@ struct Arguments {
     macros: Vec<Path>,
     /// Shared preprocessing configuration passed to each injected macro.
     config: ExpansionConfig,
-}
-
-/// Complete input to the external-module expander.
-struct Invocation {
-    /// Macro injection arguments before the separating semicolon.
-    arguments: Arguments,
-    /// Out-of-line module declaration whose source will be loaded.
-    module: ItemMod,
 }
 
 /// Parses the external-module expander's leading arguments.
@@ -61,10 +55,24 @@ impl Parse for Arguments {
     }
 }
 
+/// Complete input to the external-module expander.
+struct Invocation {
+    /// Macro injection arguments before the separating semicolon.
+    arguments: Arguments,
+    /// Out-of-line module declaration whose source will be loaded.
+    module: ItemMod,
+}
+
 /// Parses the external-module expander's complete invocation.
 impl Parse for Invocation {
     /// Parses arguments, their separator, and one out-of-line module declaration.
     fn parse(input: ParseStream) -> syn::Result<Self> {
+        if let Some(arguments) = crate::helpers::arguments::input::parse_prefix(input)? {
+            return Ok(Self {
+                arguments,
+                module: input.parse()?,
+            });
+        }
         let mut argument_tokens = TokenStream::new();
 
         while !input.peek(Token![;]) {

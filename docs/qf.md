@@ -6,27 +6,15 @@ API reference on docs.rs: [`qf!`](https://docs.rs/these-macros-should-be-illegal
 mainly useful in generated code, where relying on imports from the caller would
 be impolite.
 
-<div class="highlight-comparison-key">
-  <strong>You write</strong>
-  <strong>Roughly expands to</strong>
-</div>
-
-<div class="highlight-comparison">
-
-<div class="highlight-comparison-pane">
-
-```rust
+```rust,pane="You write"
+# #[macro_use] extern crate these_macros_should_be_illegal;
 type Messages = qf!(Option<Vec<String>>);
 
 let messages: Messages = Some(vec![String::from("hello")]);
 assert_eq!(messages.as_ref().map(Vec::len), Some(1));
 ```
 
-</div>
-
-<div class="highlight-comparison-pane">
-
-```rust,ignore
+```rust,ignore,pane="Roughly expands to"
 type Messages = ::core::option::Option<
     ::std::vec::Vec<::std::string::String>,
 >;
@@ -34,10 +22,6 @@ type Messages = ::core::option::Option<
 let messages: Messages = Some(vec![String::from("hello")]);
 assert_eq!(messages.as_ref().map(Vec::len), Some(1));
 ```
-
-</div>
-
-</div>
 
 The recognized names are:
 

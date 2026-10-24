@@ -9,8 +9,8 @@ use syn::{
 };
 
 #[cfg(test)]
-use crate::helpers::preprocessing::ExpansionConfig;
-use crate::helpers::preprocessing::split_option_prefix;
+use crate::helpers::arguments::rewriting::Arguments as ExpansionConfig;
+use crate::helpers::arguments::rewriting::split_option_prefix;
 
 use TokenTree::Group as GroupTT;
 

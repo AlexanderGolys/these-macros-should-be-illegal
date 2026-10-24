@@ -8,31 +8,17 @@ The attribute argument is the generated method's signature, `vis name -> Type`.
 Without a visibility the method is private, as in ordinary Rust.
 An expression after a variant becomes that match arm's value:
 
-<div class="highlight-comparison-key">
-  <strong>You write</strong>
-  <strong>Roughly expands to</strong>
-</div>
-
-<div class="highlight-comparison">
-
-<div class="highlight-comparison-pane">
-
-```rust
+```rust,pane="You write"
+# #[macro_use] extern crate these_macros_should_be_illegal;
+# use these_macros_should_be_illegal::enum_fn;
 #[enum_fn(description -> &'static str)]
 enum Action {
     Quit = "quit the application",
     Submit = "evaluate the input",
 }
-
-const QUIT: &str = Action::Quit.description();
-assert_eq!(QUIT, "quit the application");
 ```
 
-</div>
-
-<div class="highlight-comparison-pane">
-
-```rust,ignore
+```rust,ignore,pane="Roughly expands to"
 enum Action {
     Quit,
     Submit,
@@ -46,14 +32,7 @@ impl Action {
         }
     }
 }
-
-const QUIT: &str = Action::Quit.description();
-assert_eq!(QUIT, "quit the application");
 ```
-
-</div>
-
-</div>
 
 # Field projections
 
@@ -61,16 +40,8 @@ An integer RHS selects a zero-based tuple field and an identifier matching a
 named field selects that field. The generated method borrows `self`, so the
 selected expression is a shared field binding:
 
-<div class="highlight-comparison-key">
-  <strong>You write</strong>
-  <strong>Roughly expands to</strong>
-</div>
-
-<div class="highlight-comparison">
-
-<div class="highlight-comparison-pane">
-
-```rust
+```rust,pane="You write"
+# #[macro_use] extern crate these_macros_should_be_illegal;
 #[enum_fn(description -> &str)]
 enum Message<'a> {
     Fixed = "fixed text",
@@ -87,11 +58,7 @@ assert_eq!(
 );
 ```
 
-</div>
-
-<div class="highlight-comparison-pane">
-
-```rust,ignore
+```rust,ignore,pane="Roughly expands to"
 enum Message<'a> {
     Fixed,
     Owned(String),
@@ -114,10 +81,6 @@ assert_eq!(Message::Owned("owned".into()).description(), "owned");
 assert_eq!(Message::Pair(7, "second").description(), "second");
 ```
 
-</div>
-
-</div>
-
 The field may have any type; Rust checks it against the declared return type.
 Borrowed results are tied to the borrow of `self`.
 
@@ -125,16 +88,8 @@ A closure RHS instead receives every field in declaration order and computes
 the result from the complete product. Any number of arguments,
 including zero, is supported. Rust checks its arity, body, and return type:
 
-<div class="highlight-comparison-key">
-  <strong>You write</strong>
-  <strong>Roughly expands to</strong>
-</div>
-
-<div class="highlight-comparison">
-
-<div class="highlight-comparison-pane">
-
-```rust
+```rust,pane="You write"
+# #[macro_use] extern crate these_macros_should_be_illegal;
 #[enum_fn(description -> String)]
 enum Message {
     Pair(String, String) = |left, right| format!("{left}: {right}"),
@@ -148,11 +103,7 @@ assert_eq!(
 assert_eq!(Message::Unit.description(), "unit");
 ```
 
-</div>
-
-<div class="highlight-comparison-pane">
-
-```rust,ignore
+```rust,ignore,pane="Roughly expands to"
 enum Message {
     Pair(String, String),
     Unit,
@@ -173,10 +124,6 @@ assert_eq!(
 );
 ```
 
-</div>
-
-</div>
-
 Because the generated accessor matches on `&self`, closure arguments receive
 the corresponding shared field bindings.
 
@@ -186,16 +133,8 @@ If any variant has no RHS, the declared return type is lifted into `Option`.
 When every present expression is const-compatible, the optional method remains
 a `const fn`:
 
-<div class="highlight-comparison-key">
-  <strong>You write</strong>
-  <strong>Roughly expands to</strong>
-</div>
-
-<div class="highlight-comparison">
-
-<div class="highlight-comparison-pane">
-
-```rust
+```rust,pane="You write"
+# #[macro_use] extern crate these_macros_should_be_illegal;
 #[enum_fn(description -> &'static str)]
 enum Status {
     Ready = "ready",
@@ -209,11 +148,7 @@ assert_eq!(READY, Some("ready"));
 assert_eq!(UNKNOWN, None);
 ```
 
-</div>
-
-<div class="highlight-comparison-pane">
-
-```rust,ignore
+```rust,ignore,pane="Roughly expands to"
 enum Status {
     Ready,
     Unknown,
@@ -232,23 +167,11 @@ const READY: Option<&str> = Status::Ready.description();
 const UNKNOWN: Option<&str> = Status::Unknown.description();
 ```
 
-</div>
-
-</div>
-
 Use `= stringify` on the attribute to return a missing variant's Rust name
 instead:
 
-<div class="highlight-comparison-key">
-  <strong>You write</strong>
-  <strong>Roughly expands to</strong>
-</div>
-
-<div class="highlight-comparison">
-
-<div class="highlight-comparison-pane">
-
-```rust
+```rust,pane="You write"
+# #[macro_use] extern crate these_macros_should_be_illegal;
 #[enum_fn(description -> &'static str = stringify)]
 enum Status {
     Ready = "ready",
@@ -258,11 +181,7 @@ enum Status {
 assert_eq!(Status::Unknown.description(), "Unknown");
 ```
 
-</div>
-
-<div class="highlight-comparison-pane">
-
-```rust,ignore
+```rust,ignore,pane="Roughly expands to"
 enum Status {
     Ready,
     Unknown,
@@ -280,23 +199,11 @@ impl Status {
 assert_eq!(Status::Unknown.description(), "Unknown");
 ```
 
-</div>
-
-</div>
-
 Use `= panic` when reaching an undescribed variant is a bug. The method keeps
 the declared return type, and the missing arms panic with the variant's name:
 
-<div class="highlight-comparison-key">
-  <strong>You write</strong>
-  <strong>Roughly expands to</strong>
-</div>
-
-<div class="highlight-comparison">
-
-<div class="highlight-comparison-pane">
-
-```rust
+```rust,pane="You write"
+# #[macro_use] extern crate these_macros_should_be_illegal;
 #[enum_fn(description -> &'static str = panic)]
 enum Status {
     Ready = "ready",
@@ -307,11 +214,8 @@ assert_eq!(Status::Ready.description(), "ready");
 Status::Unknown.description();
 ```
 
-</div>
-
-<div class="highlight-comparison-pane">
-
-```rust,mdbook-runnable,should_panic
+```rust,mdbook-runnable,should_panic,pane="Roughly expands to"
+# #[macro_use] extern crate these_macros_should_be_illegal;
 enum Status {
     Ready,
     Unknown,
@@ -330,10 +234,6 @@ assert_eq!(Status::Ready.description(), "ready");
 Status::Unknown.description();
 ```
 
-</div>
-
-</div>
-
 # Generic enums and ordinary Rust structure
 
 The original enum declaration remains an ordinary `syn::ItemEnum`. Attributes,
@@ -342,6 +242,7 @@ retained. Conditional attributes are copied to the corresponding generated
 match arms so the enum and method stay exhaustive under the same configuration.
 
 ```rust
+# #[macro_use] extern crate these_macros_should_be_illegal;
 #[enum_fn(size -> usize)]
 pub(crate) enum Value<'a, T: AsRef<str>, const N: usize>
 where
@@ -374,16 +275,8 @@ The declared type is arbitrary. Expressions and closures must produce it
 themselves; `enum_fn` performs no string conversion or cloning. Optionality is
 inferred independently from the declared return type:
 
-<div class="highlight-comparison-key">
-  <strong>You write</strong>
-  <strong>Roughly expands to</strong>
-</div>
-
-<div class="highlight-comparison">
-
-<div class="highlight-comparison-pane">
-
-```rust
+```rust,pane="You write"
+# #[macro_use] extern crate these_macros_should_be_illegal;
 #[enum_fn(description -> String)]
 enum Error {
     Message(String) = |message| (*message).clone(),
@@ -397,11 +290,7 @@ assert_eq!(
 assert_eq!(Error::Missing.description(), None);
 ```
 
-</div>
-
-<div class="highlight-comparison-pane">
-
-```rust,ignore
+```rust,ignore,pane="Roughly expands to"
 enum Error {
     Message(String),
     Missing,
@@ -418,10 +307,6 @@ impl Error {
 
 assert_eq!(Error::Missing.description(), None);
 ```
-
-</div>
-
-</div>
 
 An explicitly const closure uses `const { |arguments| expression }`. Its body
 is inlined into the match arm and therefore does not downgrade the generated

@@ -7,35 +7,19 @@ read like the beginning of one field, `#[attribute] pub Type`, and are repeated
 on every member of the item below: on each field of a struct or union, and on
 each variant of an enum.
 
-<div class="highlight-comparison-key">
-  <strong>You write</strong>
-  <strong>Roughly expands to</strong>
-</div>
-
-<div class="highlight-comparison">
-
-<div class="highlight-comparison-pane">
-
-```rust
+```rust,pane="You write"
+# #[macro_use] extern crate these_macros_should_be_illegal;
 #[forall(pub(crate))]
 pub struct Pixel(u8, u8, u8);
 ```
 
-</div>
-
-<div class="highlight-comparison-pane">
-
-```rust,ignore
+```rust,ignore,pane="Roughly expands to"
 pub struct Pixel(
     pub(crate) u8,
     pub(crate) u8,
     pub(crate) u8,
 );
 ```
-
-</div>
-
-</div>
 
 ## The prefix
 
@@ -64,6 +48,7 @@ already name the type they hold, so a shared type is rejected rather than
 silently dropped:
 
 ```rust
+# #[macro_use] extern crate these_macros_should_be_illegal;
 # use these_macros_should_be_illegal::forall;
 #[forall(#[doc = "One shared field."] pub)]
 struct Window {
@@ -75,49 +60,25 @@ struct Window {
 A tuple struct takes one shared type as well, and then its fields are written
 as bare names, which Rust itself has no syntax for:
 
-<div class="highlight-comparison-key">
-  <strong>You write</strong>
-  <strong>Roughly expands to</strong>
-</div>
-
-<div class="highlight-comparison">
-
-<div class="highlight-comparison-pane">
-
-```rust
+```rust,pane="You write"
+# #[macro_use] extern crate these_macros_should_be_illegal;
 #[forall(pub, f32)]
 struct Point(x, y);
 ```
 
-</div>
-
-<div class="highlight-comparison-pane">
-
-```rust,ignore
+```rust,ignore,pane="Roughly expands to"
 struct Point {
     pub x: f32,
     pub y: f32,
 }
 ```
 
-</div>
-
-</div>
-
 An enum takes attributes and the fields of its variants, written either as the
 shared types or as one group of shared named fields. Variants have no
 visibility, so distributing one is rejected:
 
-<div class="highlight-comparison-key">
-  <strong>You write</strong>
-  <strong>Roughly expands to</strong>
-</div>
-
-<div class="highlight-comparison">
-
-<div class="highlight-comparison-pane">
-
-```rust
+```rust,pane="You write"
+# #[macro_use] extern crate these_macros_should_be_illegal;
 #[forall(u16, String)]
 enum Response {
     Redirect,
@@ -125,26 +86,17 @@ enum Response {
 }
 ```
 
-</div>
-
-<div class="highlight-comparison-pane">
-
-```rust,ignore
+```rust,ignore,pane="Roughly expands to"
 enum Response {
     Redirect(u16, String),
     Error(&'static str, u16, String),
 }
 ```
 
-</div>
+<!-- -->
 
-</div>
-
-<div class="highlight-comparison">
-
-<div class="highlight-comparison-pane">
-
-```rust
+```rust,pane="You write"
+# #[macro_use] extern crate these_macros_should_be_illegal;
 #[forall({ code: u16 })]
 enum Request {
     Read,
@@ -152,20 +104,12 @@ enum Request {
 }
 ```
 
-</div>
-
-<div class="highlight-comparison-pane">
-
-```rust,ignore
+```rust,ignore,pane="Roughly expands to"
 enum Request {
     Read { code: u16 },
     Write { payload: u8, code: u16 },
 }
 ```
-
-</div>
-
-</div>
 
 The shared fields are added after the ones a variant declares, so a variant
 holding unnamed fields takes the shared types, and a variant naming its fields
@@ -180,6 +124,7 @@ Documentation written on a tuple position is kept, and attributes written there
 survive the renaming:
 
 ```rust
+# #[macro_use] extern crate these_macros_should_be_illegal;
 # use these_macros_should_be_illegal::forall;
 #[forall(pub, u8)]
 struct Channels(
@@ -197,6 +142,7 @@ A prefix forwarded by a declarative macro is read like one written directly,
 through the invisible groups that `macro_rules!` puts around its fragments:
 
 ```rust
+# #[macro_use] extern crate these_macros_should_be_illegal;
 # use these_macros_should_be_illegal::forall;
 macro_rules! shared_fields {
     ($name:ident : $visibility:vis $shared:ty { $($field:ident),* }) => {

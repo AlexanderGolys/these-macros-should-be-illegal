@@ -14,6 +14,7 @@ cargo add these-macros-should-be-illegal
 Import only the macros used at each call site. For example:
 
 ```rust
+# #[macro_use] extern crate these_macros_should_be_illegal;
 use these_macros_should_be_illegal::{
     callable, enum_fn, make_fn, perm, qf, reflect, stringify_as, strutuct,
 };
@@ -35,8 +36,8 @@ use these_macros_should_be_illegal::{
 - [`strutuct!`](strutuct.md), with `emmun!` as an exact alias, declares a small
   family of nested algebraic types in one place and generates constructor macros
   for them.
-- The [`stringify_*` macros](stringification.md) turn identifiers, string
-  literals, and Rust types into compile-time string literals.
+- [`stringify_as!`](stringification.md) turns identifiers, string literals,
+  and Rust types into compile-time string literals.
 - [`forward_attributes`](forward-attributes.md) makes outer attributes usable as
   function-like macro configuration.
 - [`qf!`](qf.md) gives common standard-library types their fully qualified

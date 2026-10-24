@@ -16,7 +16,7 @@ strutuct! {
 }
 
 #[forward_attributes]
-#[strutuct(product_variants = true)]
+#[strutuct(product_variants)]
 strutuct! {
     ConfiguredThroughAttributes
     Pair(u8, u8)

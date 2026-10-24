@@ -6,16 +6,8 @@ Rust or-patterns require every repeated binding to have the same concrete type.
 `shared_match_arms!` instead clones one RHS into several ordinary match arms,
 so each binding is type-checked independently:
 
-<div class="highlight-comparison-key">
-  <strong>You write</strong>
-  <strong>Roughly expands to</strong>
-</div>
-
-<div class="highlight-comparison">
-
-<div class="highlight-comparison-pane">
-
-```rust
+```rust,pane="You write"
+# #[macro_use] extern crate these_macros_should_be_illegal;
 enum Value {
     Number(u32),
     Character(char),
@@ -31,11 +23,7 @@ let text = shared_match_arms! {
 assert_eq!(text, "3");
 ```
 
-</div>
-
-<div class="highlight-comparison-pane">
-
-```rust,ignore
+```rust,ignore,pane="Roughly expands to"
 enum Value {
     Number(u32),
     Character(char),
@@ -50,10 +38,6 @@ let text = match value {
 assert_eq!(text, "3");
 ```
 
-</div>
-
-</div>
-
 The invented `||` joins complete arm patterns, not Rust or-patterns. The
 expansion above contains two independent arms with the same RHS.
 
@@ -61,16 +45,8 @@ expansion above contains two independent arms with the same RHS.
 
 Parenthesize a component when it has its own guard:
 
-<div class="highlight-comparison-key">
-  <strong>You write</strong>
-  <strong>Roughly expands to</strong>
-</div>
-
-<div class="highlight-comparison">
-
-<div class="highlight-comparison-pane">
-
-```rust
+```rust,pane="You write"
+# #[macro_use] extern crate these_macros_should_be_illegal;
 enum Value {
     Number(u32),
     Character(char),
@@ -89,11 +65,7 @@ let selected = shared_match_arms! {
 assert!(selected);
 ```
 
-</div>
-
-<div class="highlight-comparison-pane">
-
-```rust,ignore
+```rust,ignore,pane="Roughly expands to"
 enum Value {
     Number(u32),
     Character(char),
@@ -109,13 +81,9 @@ let selected = match value {
 assert!(selected);
 ```
 
-</div>
-
-</div>
-
 Logical OR remains ordinary Rust when it occurs inside a component guard:
 
-```text
+```rust,ignore
 (Pattern(value) if first(value) || second(value)) || Other(value) => rhs
 ```
 

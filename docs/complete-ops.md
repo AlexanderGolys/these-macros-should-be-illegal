@@ -8,6 +8,7 @@ abelian group, then `x - v` makes sense too: `-v` lies in that same group, so
 and claims nothing else.
 
 ```rust
+# #[macro_use] extern crate these_macros_should_be_illegal;
 use std::ops::{Add, Neg};
 #[derive(Debug, PartialEq)]
 #[complete_ops(Sub)]
@@ -62,6 +63,7 @@ below and run it, for example subtracting `&Vector(2.0)` to see a borrowed
 operand rejected:
 
 ```rust,editable,mdbook-runnable
+# #[macro_use] extern crate these_macros_should_be_illegal;
 use std::ops::{Add, Neg, Sub};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -112,6 +114,7 @@ Nothing about the attributed type's own structure is assumed, so a space acted
 on by a group completes exactly as a group acting on itself does:
 
 ```rust
+# #[macro_use] extern crate these_macros_should_be_illegal;
 use std::ops::{Add, Neg};
 #[derive(Debug, PartialEq)]
 struct Vector(f64);
@@ -165,6 +168,7 @@ completed. Where a type does have one, it stays hand-written and coexists with
 the completion:
 
 ```rust
+# #[macro_use] extern crate these_macros_should_be_illegal;
 use std::ops::{Add, Neg, Sub};
 #[derive(Debug, PartialEq)]
 struct Vector(f64);
@@ -213,6 +217,7 @@ since `-x` is `x` scaled by `-1`. Naming the scalar completes `Neg`, which the
 subtraction then goes through:
 
 ```rust
+# #[macro_use] extern crate these_macros_should_be_illegal;
 use std::ops::{Add, Mul};
 #[derive(Debug, PartialEq)]
 #[complete_ops(Neg = -1.0f64, Sub)]
@@ -268,7 +273,7 @@ A borrowed *right* operand is not a group element: negating `&Vector` yields an
 owned `Vector`, so `&Vector: Neg<Output = &Vector>` does not hold and the
 completion does not apply. `x - &v` is therefore rejected:
 
-```text
+```rust,ignore
 error[E0271]: type mismatch resolving `<&Vector as Neg>::Output == &Vector`
 ```
 

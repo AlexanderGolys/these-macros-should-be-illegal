@@ -11,7 +11,7 @@ structure built around them:
 
 - [`callable`](callable.md) marks the trait method that gives an object
   function-like macro syntax, retaining its original type and methods;
-- [`discriminated_str`](discriminated_str.md) creates a unique string mapping
+- [`discriminated_str`](discriminated_str.md), also exported as `disctr`, creates a unique string mapping
   and a literal-selected constructor macro;
 - [`enum_fn`](enum_fn.md) turns per-variant expressions into a method;
 - [`forall`](forall.md) writes the constant part of a field or variant
@@ -32,10 +32,10 @@ the complete input is an item or expression. Each takes an optional leading
 `exclude_macros = (names);` option, ended by a semicolon, naming the macro
 invocations it must leave opaque:
 
-- [`shared_match_arms!`](shared-match-arms.md) duplicates one match-arm RHS
+- [`shared_match_arms!`](shared-match-arms.md), also exported as `sma!`, duplicates one match-arm RHS
   across independently typed patterns;
 - [`literally_literal_string!`](literal-syntax.md#literally_literal_string)
-  recognizes the deliberately invalid `@@"text"`.
+  (also exported as `lls!`) recognizes the deliberately invalid `@@"text"`.
 
 Read [How token rewriting behaves](token-rewriting.md) before combining the
 whole-stream extensions with attributes or macros that consume private syntax.

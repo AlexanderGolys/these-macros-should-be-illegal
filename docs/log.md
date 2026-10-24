@@ -5,14 +5,14 @@ API reference on docs.rs: [`Log`](https://docs.rs/these-macros-should-be-illegal
 A struct is a product over its field names. Writing `E` for the set of those
 names,
 
-```text
+```rust,ignore
 S  =  ∏ₑ∈ᴇ Xₑ
 ```
 
 and when every field holds the same type `X` the product collapses to an
 exponential:
 
-```text
+```rust,ignore
 S  =  X^E  =  Hom(E, X)
 ```
 
@@ -21,16 +21,7 @@ generates that index set as an enum of unit variants, one per field, spelled
 exactly as the field names. It only adds items beside the struct it reads, and
 never rewrites it, which is what makes it a derive.
 
-<div class="highlight-comparison-key">
-  <strong>You write</strong>
-  <strong>Adds</strong>
-</div>
-
-<div class="highlight-comparison">
-
-<div class="highlight-comparison-pane">
-
-```rust,ignore
+```rust,ignore,pane="You write"
 #[derive(Log)]
 struct BaseGroups {
     Keyword: Style,
@@ -40,11 +31,7 @@ struct BaseGroups {
 }
 ```
 
-</div>
-
-<div class="highlight-comparison-pane">
-
-```rust,ignore
+```rust,ignore,pane="Adds"
 enum LogBaseGroups {
     Keyword,
     Function,
@@ -59,10 +46,6 @@ impl Index<LogBaseGroups> for BaseGroups {
 
 impl IndexMut<LogBaseGroups> for BaseGroups { /* ... */ }
 ```
-
-</div>
-
-</div>
 
 Field names are kept as they are written, raw-identifier escape included, so the
 enum is the set of field names and nothing else. The enum allows
@@ -79,6 +62,7 @@ signature in one trait, so the evaluation map is derived as
 its mutable half:
 
 ```rust
+# #[macro_use] extern crate these_macros_should_be_illegal;
 # use these_macros_should_be_illegal::Log;
 # #[derive(Clone, Copy, Debug, PartialEq)]
 # pub struct Style(u8);
@@ -101,6 +85,7 @@ Since the field names are ordinary values, the isomorphism also runs the other
 way: the struct becomes a map out of its index set.
 
 ```rust
+# #[macro_use] extern crate these_macros_should_be_illegal;
 # use std::collections::HashMap;
 # use these_macros_should_be_illegal::Log;
 # #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -134,6 +119,7 @@ names it otherwise — the `enum` keyword is optional, a trailing comma is
 accepted, and attributes written there replace the defaults:
 
 ```rust
+# #[macro_use] extern crate these_macros_should_be_illegal;
 # use these_macros_should_be_illegal::Log;
 /// Distances along the axes of the plane.
 #[derive(Log)]
@@ -172,6 +158,7 @@ is how [`forall`](forall.md) writes the fields this one reads — one type, one
 visibility, and no repetition:
 
 ```rust
+# #[macro_use] extern crate these_macros_should_be_illegal;
 # use these_macros_should_be_illegal::{Log, forall};
 # #[derive(Clone, Copy, Debug, PartialEq)]
 # pub struct Style(u8);
