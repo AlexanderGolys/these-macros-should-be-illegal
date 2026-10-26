@@ -3,12 +3,12 @@
 use these_macros_should_be_illegal::enum_fn;
 
 /// Command labels generated from constant, computed, and missing arms.
-#[enum_fn(label -> String)]
+#[enum_fn(label -> Option<String>, missing = None)]
 enum Command<'a> {
     /// A fixed owned label.
-    Quit = String::from("quit"),
+    Quit = || Some(String::from("quit")),
     /// A label computed from the borrowed payload.
-    Named(&'a str) = |name| format!("run {name}"),
+    Named(&'a str) = |name| Some(format!("run {name}")),
     /// A deliberately absent label.
     Hidden,
 }

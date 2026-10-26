@@ -53,15 +53,15 @@ only `sigma!` occupies the macro namespace.
 ## Generate small enum methods beside their variants
 
 `enum_fn` lets you write match-arm expressions exactly where you look for them:
-beside the variants. Fixed values, selected fields, closures, and missing arms
+beside the variants. Fixed values, closures, and missing arms
 can all live in the same enum:
 
 ```rust
-#[enum_fn(description -> &str)]
+#[enum_fn(description -> Option<&str>, missing = None)]
 enum Failure<'a> {
-    Timeout = "the operation timed out",
-    Message(String) = 0,
-    Context { code: u16, text: &'a str } = text,
+    Timeout = Some("the operation timed out"),
+    Message(String) = |value| Some(value.as_str()),
+    Context { code: u16, text: &'a str } = |code, text| { let _ = code; Some(*text) },
     Undescribed(u16),
 }
 
@@ -74,13 +74,13 @@ assert_eq!(
 assert_eq!(Failure::Undescribed(7).description(), None);
 ```
 
-If selecting one field is not enough, use a closure over all the fields:
+Closures can compute a value from all the fields:
 
 ```rust
 #[enum_fn(display -> String)]
 enum Name {
     Qualified(String, String) = |module, item| format!("{module}::{item}"),
-    Anonymous = "<anonymous>",
+    Anonymous = || String::from("<anonymous>"),
 }
 
 assert_eq!(
@@ -341,50 +341,66 @@ pub fn greeting() -> String {
 
 ## `enum_fn` details
 
-The attribute argument is the method signature, `vis name -> Type`; without a
-visibility the method is private, as in ordinary Rust. The macro does not
-infer, clone, or convert its result:
+Write `#[enum_fn(const name -> Type, missing = expression)]` on an enum.
+
+| Argument | Accepted value | Default |
+| --- | --- | --- |
+| `name` | Generated method's identifier | Required |
+| `Type` | Exact Rust return type after `->` | Required |
+| `missing` | Expression used by the wildcard arm | `::core::panic!()` |
+
+Methods borrow `&self` and are private unless a visibility precedes the name,
+for example `#[enum_fn(pub const label -> String)]`. Methods are runtime by
+default; put `const` after visibility to request a `const fn`. A trailing comma
+is accepted.
+Attributes placed before the signature inside the arguments apply to the
+generated method, such as `#[enum_fn(#[doc = "Returns the label."] label -> String)]`.
+Without a method doc attribute, only the generated method gets
+`#[allow(missing_docs)]`; enum-level docs stay on the enum.
+Types and values are used as written; no conversion, cloning, or optional
+wrapping is implicit. Without `const`, any Rust expression is accepted,
+including calls such as `f(2)`. With `const`, Rust checks that every variant
+expression and the fallback are const-compatible. Const methods cannot use
+lambdas.
+
+Variant values are Rust expressions or lambdas:
+
+- `Variant = expression` supplies a fixed result, independent of payload fields;
+- `Variant(T, String) = |x, text| expression` borrows one argument per field;
+- `Variant { code: T } = |code| expression` requires the field's own name;
+- unit variants and empty products use `|| expression` for runtime computation;
+- a variant without a value reaches `_ => missing`.
+
+Tuple argument names are arbitrary; named arguments follow field declaration
+order. The macro checks arity and names, while Rust checks types. A single
+field containing a tuple is still one field. Borrowed results can live as long
+as the borrow of `self`.
+
+Use `#[enum_fn(const code -> u8)]` when callers need to use the method in a
+constant. Use `|| String::from("fixed")` for an owned runtime value on a unit
+variant.
+Fixed-result methods preserve elided return references such as `&str`; lambda
+methods use an explicit borrow lifetime so they can return references to fields.
+
+The wildcard is always emitted, so `non_exhaustive` works in either attribute
+order. A missing value defaults to `panic!()`; a custom fallback can be a value,
+a runtime expression, or a custom panic:
 
 ```rust
-#[enum_fn(label -> String)]
-enum OwnedLabel {
-    Fixed = String::from("fixed"),
-    Dynamic(String) = |value| (*value).clone(),
-}
-```
-
-The rules are intentionally simple:
-
-- `Variant = expression` supplies an ordinary match-arm expression;
-- `Variant(T, String) = 1` selects a zero-based tuple field;
-- `Variant { text: String } = text` selects a named field;
-- `Variant(A, B) = |a, b| expression` gets every field in declaration order;
-- a variant with no RHS produces `None`.
-
-The generated accessor invokes the closure with borrowed field bindings. Rust
-checks its argument count, body, and return type.
-
-Any missing arm wraps the declared result in `Option`. Literal expressions can
-retain a `const fn`; ordinary closures make it runtime. Use
-`const { |arguments| expression }` to explicitly inline a const-compatible
-closure without downgrading the method.
-
-Missing descriptions can use their variant names instead of `None`:
-
-```rust
-#[enum_fn(description -> &'static str = stringify)]
-enum State {
-    Explicit = "custom spelling",
-    Generated,
+#[enum_fn(const code -> u8, missing = 255)]
+enum Status {
+    Ready = 1,
+    Unknown,
 }
 
-assert_eq!(State::Generated.description(), "Generated");
+const UNKNOWN: u8 = Status::Unknown.code();
+assert_eq!(UNKNOWN, 255);
 ```
 
-Generics, where clauses, and lifetimes are copied through. Borrowed results live
-as long as the borrow of `self`. `cfg` and `cfg_attr` are also copied onto the
-generated match arms, otherwise conditional variants would immediately ruin the
-fun.
+For optional results, explicitly declare `Option<T>`, write `Some(...)` for
+present values (including lambda results), and set `missing = None`.
+Generics, where clauses, lifetimes, and conditional compilation are preserved.
+See the [full reference](docs/enum_fn.md) for examples.
 
 ## `strutuct!` details
 

@@ -10,9 +10,9 @@
 //! ```
 //! # use these_macros_should_be_illegal::enum_fn;
 //!
-//! #[enum_fn(code -> usize)]
+//! #[enum_fn(code -> Option<usize>, missing = None)]
 //! enum Status {
-//!     Ready = 200,
+//!     Ready = Some(200),
 //!     Missing,
 //! }
 //!
@@ -32,40 +32,40 @@
 //! that expression unchanged, rather than inspecting its name or literal value.
 
 mod generate {
-    pub mod callable;
-    pub mod complete_ops;
-    pub mod discriminated_str;
-    pub mod enum_fn;
-    pub mod forall;
-    pub mod log;
-    pub mod overload_op;
-    pub mod strutuct;
+    pub(crate) mod callable;
+    pub(crate) mod complete_ops;
+    pub(crate) mod discriminated_str;
+    pub(crate) mod enum_fn;
+    pub(crate) mod forall;
+    pub(crate) mod log;
+    pub(crate) mod overload_op;
+    pub(crate) mod strutuct;
 }
 
 mod helpers {
-    pub mod arguments;
-    pub mod fresh_name;
-    pub mod preprocessing;
-    pub mod ungroup;
+    pub(crate) mod arguments;
+    pub(crate) mod fresh_name;
+    pub(crate) mod preprocessing;
+    pub(crate) mod ungroup;
 }
 
 mod meta {
-    pub mod expand;
-    pub mod forward_attributes;
-    pub mod macro_args;
-    pub mod make_fn;
-    pub mod perm;
-    pub mod reflect;
+    pub(crate) mod expand;
+    pub(crate) mod forward_attributes;
+    pub(crate) mod macro_args;
+    pub(crate) mod make_fn;
+    pub(crate) mod perm;
+    pub(crate) mod reflect;
 }
 
 mod qol {
-    pub mod qf;
-    pub mod stringify_as;
+    pub(crate) mod qf;
+    pub(crate) mod stringify_as;
 }
 
 mod sand {
-    pub mod literally_literal_string;
-    pub mod shared_match_arms;
+    pub(crate) mod literally_literal_string;
+    pub(crate) mod shared_match_arms;
 }
 
 use crate::generate::*;
@@ -83,6 +83,13 @@ macro_rules! make_attr {
             $implementation(arguments.into(), item.into()).into()
         }
     };
+        ($(#[$attribute:meta])* $name:ident) => {
+        $(#[$attribute])*
+        #[proc_macro_attribute]
+        pub fn $name(arguments: TokenStream, item: TokenStream) -> TokenStream {
+            $name::$name(arguments.into(), item.into()).into()
+        }
+    };
 }
 
 macro_rules! make_proc {
@@ -91,6 +98,13 @@ macro_rules! make_proc {
         #[proc_macro]
         pub fn $name(input: TokenStream) -> TokenStream {
             $implementation(input.into()).into()
+        }
+    };
+        ($(#[$attribute:meta])* $name:ident) => {
+        $(#[$attribute])*
+        #[proc_macro]
+        pub fn $name(input: TokenStream) -> TokenStream {
+            $name::$name(input.into()).into()
         }
     };
     ($(#[$attribute:meta])* $name:ident => no_arguments $implementation:path) => {
@@ -140,7 +154,7 @@ make_attr! {
     /// make_fn!(sigma = Shift(3));
     /// assert_eq!(sigma!(2), 5);
     /// ```
-    callable => callable::callable
+    callable
 }
 
 make_attr! {
@@ -197,7 +211,7 @@ make_attr! {
     ///
     /// assert_eq!(Vector(5.0) - Vector(2.0), Vector(3.0));
     /// ```
-    complete_ops => complete_ops::complete_ops
+    complete_ops
 }
 
 make_attr! {
@@ -235,7 +249,7 @@ make_attr! {
     /// }
     /// ```
     #[doc(alias = "disctr")]
-    discriminated_str => discriminated_str::discriminated_str
+    discriminated_str
 }
 
 make_attr! {
@@ -261,41 +275,98 @@ make_attr! {
 make_attr! {
     /// Generates an enum method from per-variant expressions written beside the variants.
     ///
-    /// The argument is the method signature, `vis name -> Type`; without a
-    /// visibility the method is private, as in ordinary Rust. The expression after
-    /// each variant becomes that match arm's value.
+    /// Write `#[enum_fn(const name -> Type, missing = expression)]` on an enum.
+    /// The method borrows `&self`, returns exactly the written type, and is
+    /// runtime-callable by default. Add `const` after visibility to request a
+    /// `const fn`.
     ///
     /// # Arguments
     ///
-    /// Write `#[enum_fn(visibility method -> Type = fallback)]` directly on an enum.
-    ///
     /// | Argument | Accepted value | Default |
     /// | --- | --- | --- |
-    /// | `visibility` | Rust visibility, such as `pub` or `pub(crate)` | Private |
-    /// | `method` | Identifier naming the generated accessor | Required |
-    /// | `Type` | Rust return type after `->` | Required |
-    /// | `fallback` | `stringify` or `panic`, after `=` | Missing variants return `None` |
+    /// | `name` | Generated method's identifier | Required |
+    /// | `Type` | Exact Rust return type after `->` | Required |
+    /// | `missing` | Expression used by the wildcard arm | `::core::panic!()` |
     ///
-    /// `stringify` uses the missing variant's name; `panic` panics when that variant
-    /// is reached. With the default fallback, missing variants make the return type
-    /// `Option<Type>`. Omit `= fallback` to select that default. One trailing comma
-    /// is accepted. Per-variant expressions and field selectors belong to the enum.
+    /// The method is private unless a Rust visibility precedes its name, such as
+    /// `pub(crate) const name -> Type`. One trailing comma is accepted.
+    /// Attributes written before the signature inside the arguments apply to
+    /// the generated method. For example,
+    /// `#[enum_fn(#[doc = "Returns the code."] const code -> u8)]` documents it.
+    /// Without a method doc attribute, only the generated method receives
+    /// `#[allow(missing_docs)]`; documentation on the enum stays on the enum.
+    ///
+    /// Each variant's RHS may be any Rust expression or a lambda. Lambda
+    /// arguments borrow one field each; their count must equal the field count.
+    /// Named fields require parameters with the same names in declaration order;
+    /// tuple parameters choose their names. Unit variants and empty products
+    /// take zero-argument lambdas. A `const` method cannot use lambdas, and Rust
+    /// checks that its expressions and fallback are const-compatible. There is
+    /// no implicit conversion, cloning, `Option`, or `Some` wrapping.
+    /// Fixed-result methods preserve elided return references such as `&str`.
+    /// Lambda methods use an explicit generated borrow lifetime so a result can
+    /// borrow from the variant's fields.
+    ///
+    /// Variants without values reach `_ => missing`. This wildcard is always
+    /// emitted, so `non_exhaustive` works in either attribute order. Conditional
+    /// compilation is preserved on generated code.
     ///
     /// # Examples
     ///
     /// ```
     /// # use these_macros_should_be_illegal::enum_fn;
-    ///
-    /// #[enum_fn(description -> &'static str)]
-    /// enum Action {
-    ///     Quit = "quit the application",
-    ///     Submit = "evaluate the input",
+    /// #[enum_fn(const code -> u8)]
+    /// enum Status {
+    ///     Ready = 1,
+    ///     Dynamic(String) = 0,
     /// }
-    ///
-    /// const QUIT: &str = Action::Quit.description();
-    /// assert_eq!(QUIT, "quit the application");
+    /// const READY: u8 = Status::Ready.code();
+    /// assert_eq!(READY, 1);
+    /// assert_eq!(Status::Dynamic(String::new()).code(), 0);
     /// ```
-    enum_fn => enum_fn::enum_fn
+    ///
+    /// Optional results are explicit in both the type and values:
+    ///
+    /// ```
+    /// # use these_macros_should_be_illegal::enum_fn;
+    /// #[enum_fn(description -> Option<&str>, missing = None)]
+    /// enum Message {
+    ///     Fixed = Some("fixed"),
+    ///     Named { text: String } = |text| Some(text.as_str()),
+    ///     Missing,
+    /// }
+    /// assert_eq!(Message::Fixed.description(), Some("fixed"));
+    /// assert_eq!(Message::Named { text: "hello".into() }.description(), Some("hello"));
+    /// assert_eq!(Message::Missing.description(), None);
+    /// ```
+    ///
+    /// Named-field parameters cannot rename their fields:
+    ///
+    /// ```compile_fail
+    /// # use these_macros_should_be_illegal::enum_fn;
+    /// #[enum_fn(code -> u8)]
+    /// enum Value { Named { code: u8 } = |c| *c }
+    /// ```
+    ///
+    /// Tuple fields require one parameter each:
+    ///
+    /// ```compile_fail
+    /// # use these_macros_should_be_illegal::enum_fn;
+    /// #[enum_fn(code -> u8)]
+    /// enum Value { Pair(u8, u8) = |pair| pair.0 + pair.1 }
+    /// ```
+    ///
+    /// Fixed results can call runtime functions without a lambda:
+    ///
+    /// ```
+    /// # use these_macros_should_be_illegal::enum_fn;
+    /// fn label(value: u8) -> String { value.to_string() }
+    /// #[enum_fn(label -> String)]
+    /// enum Value { Fixed = label(2) }
+    /// assert_eq!(Value::Fixed.label(), "2");
+    /// ```
+
+    enum_fn
 }
 
 make_attr! {
@@ -370,7 +441,7 @@ make_attr! {
     /// assert!(matches!(response, Response::Error(404, _)));
     /// assert!(matches!(Stage::Lower, Stage::Lower));
     /// ```
-    forall => forall::forall
+    forall
 }
 
 /// Generates the enum of the field names of a struct, and its indexing operator.
@@ -511,7 +582,7 @@ make_attr! {
     /// total += &Vector(1.0, 1.0);
     /// assert_eq!(total, Vector(5.0, 7.0));
     /// ```
-    overload_op => overload_op::overload_op
+    overload_op
 }
 
 make_proc! {
@@ -616,7 +687,7 @@ make_proc! {
     /// let request = api::Request { method: api::RequestMethod::Get };
     /// assert!(matches!(request.method, api::RequestMethod::Get));
     /// ```
-    strutuct => strutuct::strutuct
+    strutuct
 }
 
 make_proc! {
@@ -697,7 +768,7 @@ make_proc! {
     /// }
     /// ```
     #[doc(alias = "lls")]
-    literally_literal_string => literally_literal_string::literally_literal_string
+    literally_literal_string
 }
 
 make_proc! {
@@ -763,7 +834,7 @@ make_proc! {
     /// assert_eq!(text, "3");
     /// ```
     #[doc(alias = "sma")]
-    shared_match_arms => shared_match_arms::shared_match_arms
+    shared_match_arms
 }
 
 make_proc! {
@@ -834,7 +905,7 @@ make_attr! {
     ///     assert_eq!(stringify_as!(@macro_args(snake); SomeName), "some_name");
     /// }
     /// ```
-    macro_args => macro_args::macro_args
+    macro_args
 }
 
 make_proc! {
@@ -878,7 +949,7 @@ make_proc! {
     ///     assert_eq!(owned, "loaded outside Rust");
     /// }
     /// ```
-    expand => expand::expand
+    expand
 }
 
 make_attr! {
@@ -909,7 +980,7 @@ make_attr! {
     ///     assert_eq!(format!("{:?}", State::Waiting), "Waiting");
     /// }
     /// ```
-    forward_attributes => forward_attributes::forward_attributes
+    forward_attributes
 }
 
 make_proc! {
@@ -1112,5 +1183,5 @@ make_proc! {
     ///     "type:fn((u8,u16),*const[u8;4])->bool",
     /// );
     /// ```
-    stringify_as => stringify_as::stringify_as
+    stringify_as
 }

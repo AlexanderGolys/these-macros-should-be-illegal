@@ -2,247 +2,173 @@
 
 API reference on docs.rs: [`enum_fn`](https://docs.rs/these-macros-should-be-illegal/latest/these_macros_should_be_illegal/attr.enum_fn.html).
 
-Generates an enum method as an inline match expression.
+Generates a method that matches enum variants to constants or values computed
+from their borrowed fields.
 
-The attribute argument is the generated method's signature, `vis name -> Type`.
-Without a visibility the method is private, as in ordinary Rust.
-An expression after a variant becomes that match arm's value:
+## Arguments
 
-```rust,pane="You write"
-# #[macro_use] extern crate these_macros_should_be_illegal;
-# use these_macros_should_be_illegal::enum_fn;
-#[enum_fn(description -> &'static str)]
-enum Action {
-    Quit = "quit the application",
-    Submit = "evaluate the input",
-}
+```rust,ignore
+#[enum_fn(const name -> Type, missing = expression)]
 ```
 
-```rust,ignore,pane="Roughly expands to"
-enum Action {
-    Quit,
-    Submit,
-}
+| Argument | Accepted value | Default |
+| --- | --- | --- |
+| `name` | Generated method's identifier | Required |
+| `Type` | Exact Rust return type after `->` | Required |
+| `missing` | Rust expression used by the wildcard arm | `::core::panic!()` |
 
-impl Action {
-    const fn description(&self) -> &'static str {
-        match self {
-            Self::Quit => "quit the application",
-            Self::Submit => "evaluate the input",
-        }
-    }
-}
+Methods are runtime by default. Add `const` after the visibility to request a
+`const fn`, for example `#[enum_fn(pub(crate) const code -> u8)]`. A trailing
+comma is accepted.
+
+Attributes before the signature inside the macro arguments apply to the
+generated method. Add method documentation there when wanted:
+
+```rust,ignore
+#[enum_fn(#[doc = "Returns the protocol code."] pub const code -> u8)]
 ```
 
-# Field projections
+Without a method doc attribute, the generated method receives
+`#[allow(missing_docs)]`. Attributes written outside `enum_fn` remain on the
+enum.
 
-An integer RHS selects a zero-based tuple field and an identifier matching a
-named field selects that field. The generated method borrows `self`, so the
-selected expression is a shared field binding:
+The generated method always borrows `&self`. Return types and values are used
+as written: there is no implicit `Option`, `Some`, conversion, or cloning.
 
-```rust,pane="You write"
-# #[macro_use] extern crate these_macros_should_be_illegal;
-#[enum_fn(description -> &str)]
-enum Message<'a> {
-    Fixed = "fixed text",
-    Owned(String) = 0,
-    Pair(u8, &'a str) = 1,
-    Named { code: u8, text: String } = text,
-}
+## Fixed results
 
-assert_eq!(Message::Owned("owned".into()).description(), "owned");
-assert_eq!(Message::Pair(7, "second").description(), "second");
-assert_eq!(
-    Message::Named { code: 9, text: "named".into() }.description(),
-    "named",
-);
-```
-
-```rust,ignore,pane="Roughly expands to"
-enum Message<'a> {
-    Fixed,
-    Owned(String),
-    Pair(u8, &'a str),
-    Named { code: u8, text: String },
-}
-
-impl Message<'_> {
-    fn description(&self) -> &str {
-        match self {
-            Self::Fixed => "fixed text",
-            Self::Owned(value) => value,
-            Self::Pair(_, value) => value,
-            Self::Named { text, .. } => text,
-        }
-    }
-}
-
-assert_eq!(Message::Owned("owned".into()).description(), "owned");
-assert_eq!(Message::Pair(7, "second").description(), "second");
-```
-
-The field may have any type; Rust checks it against the declared return type.
-Borrowed results are tied to the borrow of `self`.
-
-A closure RHS instead receives every field in declaration order and computes
-the result from the complete product. Any number of arguments,
-including zero, is supported. Rust checks its arity, body, and return type:
-
-```rust,pane="You write"
-# #[macro_use] extern crate these_macros_should_be_illegal;
-#[enum_fn(description -> String)]
-enum Message {
-    Pair(String, String) = |left, right| format!("{left}: {right}"),
-    Unit = || String::from("unit"),
-}
-
-assert_eq!(
-    Message::Pair("hello".into(), "world".into()).description(),
-    "hello: world",
-);
-assert_eq!(Message::Unit.description(), "unit");
-```
-
-```rust,ignore,pane="Roughly expands to"
-enum Message {
-    Pair(String, String),
-    Unit,
-}
-
-impl Message {
-    fn description(&self) -> String {
-        match self {
-            Self::Pair(left, right) => format!("{left}: {right}"),
-            Self::Unit => String::from("unit"),
-        }
-    }
-}
-
-assert_eq!(
-    Message::Pair("hello".into(), "world".into()).description(),
-    "hello: world",
-);
-```
-
-Because the generated accessor matches on `&self`, closure arguments receive
-the corresponding shared field bindings.
-
-# Missing arms
-
-If any variant has no RHS, the declared return type is lifted into `Option`.
-When every present expression is const-compatible, the optional method remains
-a `const fn`:
-
-```rust,pane="You write"
-# #[macro_use] extern crate these_macros_should_be_illegal;
-#[enum_fn(description -> &'static str)]
-enum Status {
-    Ready = "ready",
-    Unknown,
-}
-
-const READY: Option<&str> = Status::Ready.description();
-const UNKNOWN: Option<&str> = Status::Unknown.description();
-
-assert_eq!(READY, Some("ready"));
-assert_eq!(UNKNOWN, None);
-```
-
-```rust,ignore,pane="Roughly expands to"
-enum Status {
-    Ready,
-    Unknown,
-}
-
-impl Status {
-    const fn description(&self) -> Option<&'static str> {
-        match self {
-            Self::Ready => Some("ready"),
-            Self::Unknown => None,
-        }
-    }
-}
-
-const READY: Option<&str> = Status::Ready.description();
-const UNKNOWN: Option<&str> = Status::Unknown.description();
-```
-
-Use `= stringify` on the attribute to return a missing variant's Rust name
-instead:
-
-```rust,pane="You write"
-# #[macro_use] extern crate these_macros_should_be_illegal;
-#[enum_fn(description -> &'static str = stringify)]
-enum Status {
-    Ready = "ready",
-    Unknown,
-}
-
-assert_eq!(Status::Unknown.description(), "Unknown");
-```
-
-```rust,ignore,pane="Roughly expands to"
-enum Status {
-    Ready,
-    Unknown,
-}
-
-impl Status {
-    const fn description(&self) -> &'static str {
-        match self {
-            Self::Ready => "ready",
-            Self::Unknown => "Unknown",
-        }
-    }
-}
-
-assert_eq!(Status::Unknown.description(), "Unknown");
-```
-
-Use `= panic` when reaching an undescribed variant is a bug. The method keeps
-the declared return type, and the missing arms panic with the variant's name:
-
-```rust,pane="You write"
-# #[macro_use] extern crate these_macros_should_be_illegal;
-#[enum_fn(description -> &'static str = panic)]
-enum Status {
-    Ready = "ready",
-    Unknown,
-}
-
-assert_eq!(Status::Ready.description(), "ready");
-Status::Unknown.description();
-```
-
-```rust,mdbook-runnable,should_panic,pane="Roughly expands to"
-# #[macro_use] extern crate these_macros_should_be_illegal;
-enum Status {
-    Ready,
-    Unknown,
-}
-
-impl Status {
-    const fn description(&self) -> &'static str {
-        match self {
-            Self::Ready => "ready",
-            Self::Unknown => panic!("variant `Unknown` has no generated value"),
-        }
-    }
-}
-
-assert_eq!(Status::Ready.description(), "ready");
-Status::Unknown.description();
-```
-
-# Generic enums and ordinary Rust structure
-
-The original enum declaration remains an ordinary `syn::ItemEnum`. Attributes,
-visibility, generics, bounds, lifetimes, where clauses, and field types are
-retained. Conditional attributes are copied to the corresponding generated
-match arms so the enum and method stay exhaustive under the same configuration.
+A non-lambda RHS supplies a fixed result, independent of the variant's fields.
+It may be any Rust expression, including a function call; no lambda is needed
+unless the result depends on payload fields.
 
 ```rust
-# #[macro_use] extern crate these_macros_should_be_illegal;
+# use these_macros_should_be_illegal::enum_fn;
+#[enum_fn(const description -> u8)]
+enum MixedDescription {
+    Tuple = 1,
+    Struct = 2,
+    Dynamic(String) = 0,
+}
+
+const VALUE: &MixedDescription = &MixedDescription::Dynamic(String::new());
+const CODE: u8 = VALUE.description();
+assert_eq!(CODE, 0);
+assert_eq!(MixedDescription::Tuple.description(), 1);
+assert_eq!(MixedDescription::Struct.description(), 2);
+```
+
+Methods are runtime by default. Add `const` when the accessor should be usable
+in a constant context. Rust then checks that all variant expressions and the
+fallback are const-compatible. Const methods cannot use lambdas. Use a
+zero-argument lambda for runtime computation on a unit variant.
+
+Fixed-result methods preserve an elided return type such as `&str`; their
+generated signatures rely on Rust's receiver lifetime elision. Lambda methods
+use an explicit generated borrow lifetime so a result can borrow from fields.
+
+## Lambdas
+
+Each lambda must take exactly one argument per field. Arguments receive shared
+references to the fields, and Rust checks their types and the returned value.
+Borrowed results can live as long as the borrow of `self`.
+
+For named fields, lambda parameters must use the field names in declaration
+order. Tuple parameters may choose their own names. A unit variant, empty
+struct variant, or empty tuple variant takes a zero-argument lambda.
+
+```rust
+# use these_macros_should_be_illegal::enum_fn;
+#[enum_fn(code -> u8)]
+enum Value {
+    Named { code: u8 } = |code| *code,
+    Pair(u8, u8) = |x, y| *x + *y,
+    Empty {} = || 3,
+    Unit = || 4,
+}
+
+assert_eq!(Value::Named { code: 7 }.code(), 7);
+assert_eq!(Value::Pair(2, 3).code(), 5);
+assert_eq!(Value::Empty {}.code(), 3);
+assert_eq!(Value::Unit.code(), 4);
+```
+
+`Named { code: u8 } = |c| *c` is rejected because `c` renames the field.
+`Pair(u8, u8) = |x| x.0 + x.1` is rejected because two fields require two
+arguments. A single tuple-typed field remains one field:
+`Pair((u8, u8)) = |pair| pair.0 + pair.1` is valid.
+
+Lambdas make the method runtime-callable. A `const` declaration with a lambda
+is rejected with a direct diagnostic.
+
+## Missing values and non-exhaustive enums
+
+A variant without an RHS reaches the wildcard arm. By default that arm calls
+`panic!()`. Set `missing` to any expression of the declared return type:
+
+```rust
+# use these_macros_should_be_illegal::enum_fn;
+#[enum_fn(const code -> u8, missing = 255)]
+enum Status {
+    Ready = 1,
+    Unknown,
+}
+
+const UNKNOWN: u8 = Status::Unknown.code();
+assert_eq!(Status::Ready.code(), 1);
+assert_eq!(UNKNOWN, 255);
+```
+
+A custom panic is just an expression:
+`#[enum_fn(code -> u8, missing = panic!("missing code"))]`.
+
+The fallback also supports owned values and other runtime work:
+
+```rust
+# use these_macros_should_be_illegal::enum_fn;
+#[enum_fn(message -> String, missing = String::from("not available"))]
+enum Reply {
+    Accepted = || String::from("accepted"),
+    Other,
+}
+
+assert_eq!(Reply::Accepted.message(), "accepted");
+assert_eq!(Reply::Other.message(), "not available");
+```
+
+The wildcard is always emitted, so `#[non_exhaustive]` works in either
+attribute order. It is retained even when all declared variants have values;
+its unreachable-pattern warning is suppressed locally. No return-type change
+is inferred from exhaustiveness or missing values.
+
+## Optional results
+
+Write `Option<T>` in the signature, `Some(...)` on present values, and
+`missing = None`. Lambdas must also explicitly return `Some(...)`:
+
+```rust
+# use these_macros_should_be_illegal::enum_fn;
+#[enum_fn(description -> Option<&str>, missing = None)]
+#[non_exhaustive]
+enum Message {
+    Fixed = Some("fixed text"),
+    Owned(String) = |text| Some(text.as_str()),
+    Missing,
+}
+
+assert_eq!(Message::Fixed.description(), Some("fixed text"));
+assert_eq!(Message::Owned("owned".into()).description(), Some("owned"));
+assert_eq!(Message::Missing.description(), None);
+```
+
+## Generics and conditional compilation
+
+Enum attributes, visibility, generics, bounds, lifetimes, where clauses, and
+field types are retained. Conditional compilation is forwarded to generated
+implementations and arms. Nested `cfg_attr` is filtered so declaration-only
+attributes such as `non_exhaustive` stay on declarations.
+
+```rust
+# use these_macros_should_be_illegal::enum_fn;
 #[enum_fn(size -> usize)]
 pub(crate) enum Value<'a, T: AsRef<str>, const N: usize>
 where
@@ -255,59 +181,9 @@ where
     Disabled = 0,
 }
 
-fn increment(value: u8) -> u8 {
-    value + 1
-}
-
+fn increment(value: u8) -> u8 { value + 1 }
 let text = String::from("hello");
 assert_eq!(Value::<String, 3>::Text(&text).size(), 5);
 assert_eq!(Value::<String, 3>::Bytes([1, 2, 3]).size(), 3);
 assert_eq!(Value::<String, 3>::Function(increment).size(), 3);
 ```
-
-Tuple fields, arrays, raw pointers, function pointers, associated-type
-projections, and blocks are ordinary Rust in this input. An integer selector is
-validated against the selected tuple product before code generation.
-
-# Arbitrary output types
-
-The declared type is arbitrary. Expressions and closures must produce it
-themselves; `enum_fn` performs no string conversion or cloning. Optionality is
-inferred independently from the declared return type:
-
-```rust,pane="You write"
-# #[macro_use] extern crate these_macros_should_be_illegal;
-#[enum_fn(description -> String)]
-enum Error {
-    Message(String) = |message| (*message).clone(),
-    Missing,
-}
-
-assert_eq!(
-    Error::Message("details".into()).description(),
-    Some(String::from("details")),
-);
-assert_eq!(Error::Missing.description(), None);
-```
-
-```rust,ignore,pane="Roughly expands to"
-enum Error {
-    Message(String),
-    Missing,
-}
-
-impl Error {
-    fn description(&self) -> Option<String> {
-        match self {
-            Self::Message(value) => Some(value.clone()),
-            Self::Missing => None,
-        }
-    }
-}
-
-assert_eq!(Error::Missing.description(), None);
-```
-
-An explicitly const closure uses `const { |arguments| expression }`. Its body
-is inlined into the match arm and therefore does not downgrade the generated
-method from `const fn`; an ordinary closure does.

@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.12.0 - 2026-10-26
+
+### Changed
+
+- **Breaking:** `#[enum_fn]` declares its exact return type with `->`, uses
+  explicit `missing = expression` behavior, and returns the declared type
+  without inferring `Option` or wrapping values.
+- **Breaking:** `#[enum_fn]` accessors are runtime methods by default. Add
+  `const` after visibility when a const accessor is required; Rust checks all
+  values and the fallback for const compatibility.
+- `#[enum_fn]` accepts fixed expressions, including runtime function calls,
+  and lambdas over borrowed variant fields. Method-level attributes, including
+  `#[doc = "..."]`, can be written before the signature in the macro input.
+- The generated accessor no longer receives synthesized documentation. When
+  no method doc attribute is supplied, only that method gets
+  `#[allow(missing_docs)]`.
+
+### Migration
+
+Replace field selectors and inferred optional results with lambdas and explicit
+`Option` values. Add `const` to accessors used from constants. For example:
+
+```rust,ignore
+#[enum_fn(const description -> Option<&'static str>, missing = None)]
+enum State {
+    Ready = Some("ready"),
+    Unknown,
+}
+```
+
 ## 0.11.0 - 2026-10-24
 
 ### Added

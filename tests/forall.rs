@@ -305,10 +305,10 @@ pub struct Defaults(low, high);
 
 /// Enum whose variants take their documentation before another attribute macro runs.
 #[forall(#[doc = "One state of the machine."])]
-#[enum_fn(code -> u8)]
+#[enum_fn(code -> Option<u8>, missing = None)]
 pub enum State {
-    Ready = 1,
-    Busy = 2,
+    Ready = Some(1),
+    Busy = Some(2),
     Unknown,
 }
 

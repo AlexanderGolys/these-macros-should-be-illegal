@@ -2,59 +2,72 @@
 
 use proc_macro2::{Span, TokenStream};
 
-use crate::helpers::ungroup;
+use crate::helpers::{fresh_name, ungroup};
 use quote::quote;
 use syn::{
-    Attribute, Error, Expr, ExprClosure, ExprConst, ExprLit, Fields, Ident, ItemEnum, Lit, LitStr,
-    Member, Pat, PatType, Stmt, Type, Variant, ext::IdentExt, parse_quote_spanned, parse2,
-    spanned::Spanned,
-};
-
-use syn::{
-    Path, Token, Visibility,
+    Attribute, Error, Expr, ExprClosure, Fields, Ident, ItemEnum, Lifetime, Meta, Pat, PatType,
+    Token, Type, Variant, Visibility,
     parse::{Parse, ParseStream},
+    parse_quote_spanned, parse2,
+    punctuated::Punctuated,
+    spanned::Spanned,
+    visit_mut::{self, VisitMut},
 };
 
 /// Parsed accessor name and requested output representation.
 struct Arguments {
+    /// Attributes placed before the generated method signature.
+    method_attributes: Vec<Attribute>,
     /// Visibility of the generated method.
     method_visibility: Visibility,
+    /// Whether the generated method is explicitly const.
+    is_const: bool,
     /// Name of the accessor method generated on the enum.
     method_name: Ident,
-    /// Return type before optionality inferred from missing variant arms.
+    /// Exact return type declared for the generated method.
     return_type: Type,
     /// Requested behavior for variants without an arm expression.
-    missing: MissingDescription,
-}
-
-/// Behavior for variants with neither a discriminant nor an inferred value.
-#[derive(Clone, Copy)]
-enum MissingDescription {
-    /// Return `None` for the variant.
-    None,
-    /// Use the variant identifier's spelling as a constant value.
-    Stringify,
-    /// Panic when the accessor reaches the variant.
-    Panic,
+    missing: Expr,
 }
 
 /// Parses the `enum_fn` attribute's arguments.
 impl Parse for Arguments {
-    /// Parses a method visibility, name, required output type, and optional fallback.
+    /// Parses visibility, optional constness, method name, output type, and fallback.
     fn parse(input: ParseStream) -> syn::Result<Self> {
+        let method_attributes = Attribute::parse_outer(input)?;
         let visibility = input.parse()?;
-        let method = Ident::parse_any(input)?;
+        let is_const = input.peek(Token![const]);
+        if is_const {
+            input.parse::<Token![const]>()?;
+        }
+        let method = input.parse()?;
         input.parse::<Token![->]>()?;
         let output = input.parse()?;
-        let missing = if input.parse::<Option<Token![=]>>()?.is_some() {
-            input.parse()?
-        } else {
-            MissingDescription::None
-        };
-        input.parse::<Option<Token![,]>>()?;
+        let mut missing = None;
+        while !input.is_empty() {
+            input.parse::<Token![,]>()?;
+            if input.is_empty() {
+                break;
+            }
+            let option: Ident = input.parse()?;
+            if option != "missing" {
+                return Err(Error::new_spanned(
+                    option,
+                    "unknown option; expected `missing = expression`",
+                ));
+            }
+            if missing.is_some() {
+                return Err(Error::new_spanned(option, "duplicate `missing` option"));
+            }
+            input.parse::<Token![=]>()?;
+            missing = Some(input.parse()?);
+        }
+        let missing = missing.unwrap_or_else(|| syn::parse_quote!(::core::panic!()));
 
         Ok(Self {
+            method_attributes,
             method_visibility: visibility,
+            is_const,
             method_name: method,
             return_type: output,
             missing,
@@ -62,36 +75,12 @@ impl Parse for Arguments {
     }
 }
 
-/// Parses the missing-arm fallback following `=`.
-impl Parse for MissingDescription {
-    /// Accepts `stringify` or `panic`.
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let behavior: Path = input.parse()?;
-        if behavior.is_ident("stringify") {
-            Ok(Self::Stringify)
-        } else if behavior.is_ident("panic") {
-            Ok(Self::Panic)
-        } else {
-            Err(Error::new_spanned(
-                behavior,
-                "expected `stringify` or `panic` as the missing-arm behavior",
-            ))
-        }
-    }
-}
-
 /// Operation performed by the generated match arm for one variant.
 enum VariantOutput {
     /// Evaluate an ordinary Rust expression.
     Expression(Box<Expr>),
-    /// Read the explicitly selected named or unnamed field.
-    Member(Member),
-    /// Return `None`.
-    None,
     /// Invoke a closure with every field.
     Call(Box<ExprClosure>),
-    /// Panic when a variant without an expression is reached.
-    Panic,
 }
 
 /// Generates an enum method whose body is a match over its variants.
@@ -106,221 +95,147 @@ pub fn enum_fn(arguments: TokenStream, item: TokenStream) -> TokenStream {
 /// Removes method-arm expressions and emits the accessor implementation.
 fn expand(arguments: Arguments, mut item: ItemEnum) -> syn::Result<TokenStream> {
     let Arguments {
+        method_attributes,
         method_visibility: visibility,
+        is_const,
         method_name: method,
         return_type: output,
         missing,
     } = arguments;
     let mut outputs = Vec::with_capacity(item.variants.len());
-    let mut has_runtime_output = false;
-    let mut optional = false;
+    let mut has_lambda = false;
     for variant in &mut item.variants {
         let discriminant = variant
             .discriminant
             .take()
             .map(|(eq, expression)| (eq, ungroup::expr(&expression).clone()));
 
-        let output = match (&variant.fields, discriminant) {
-            (
-                Fields::Unnamed(fields),
-                Some((
-                    _,
-                    Expr::Lit(ExprLit {
-                        lit: Lit::Int(index),
-                        ..
-                    }),
-                )),
-            ) => {
-                let position = index.base10_parse::<usize>()?;
-                let selectable_fields = if fields.unnamed.len() == 1 {
-                    match ungroup::ty(&fields.unnamed.first().expect("checked one field").ty) {
-                        Type::Tuple(tuple) => tuple.elems.len(),
-                        _ => 1,
-                    }
-                } else {
-                    fields.unnamed.len()
-                };
-                if position >= selectable_fields {
-                    return Err(Error::new_spanned(
-                        index,
-                        format!(
-                            "tuple field index `{position}` is out of range for variant `{}` with {} field(s)",
-                            variant.ident, selectable_fields,
-                        ),
-                    ));
-                }
-                has_runtime_output = true;
-                VariantOutput::Member(parse2(quote!(#index))?)
+        let output = match discriminant {
+            Some((_, Expr::Closure(closure))) => {
+                validate_closure(&variant.fields, &closure)?;
+                has_lambda = true;
+                Some(VariantOutput::Call(Box::new(closure)))
             }
-            (Fields::Named(fields), Some((_, Expr::Path(path))))
-                if path.qself.is_none()
-                    && path.path.get_ident().is_some()
-                    && fields
-                        .named
-                        .iter()
-                        .any(|field| field.ident.as_ref() == path.path.get_ident()) =>
-            {
-                let name = path.path.get_ident().expect("checked above").clone();
-                has_runtime_output = true;
-                VariantOutput::Member(Member::Named(name))
-            }
-            (_, Some((_, expression))) => match expression {
-                Expr::Closure(closure) => {
-                    has_runtime_output = true;
-                    VariantOutput::Call(Box::new(closure))
-                }
-                Expr::Const(expression) => match const_closure(expression) {
-                    Ok(closure) => VariantOutput::Call(Box::new(closure)),
-                    Err(expression) => VariantOutput::Expression(Box::new(Expr::Const(expression))),
-                },
-                expression => {
-                    has_runtime_output |= !expression_preserves_const(&expression);
-                    VariantOutput::Expression(Box::new(expression))
-                }
-            },
-
-            (_, None) => match missing {
-                MissingDescription::None => {
-                    optional = true;
-                    VariantOutput::None
-                }
-                MissingDescription::Stringify => {
-                    let value =
-                        LitStr::new(&variant.ident.unraw().to_string(), variant.ident.span());
-                    VariantOutput::Expression(Box::new(Expr::Lit(ExprLit {
-                        attrs: Vec::new(),
-                        lit: Lit::Str(value),
-                    })))
-                }
-                MissingDescription::Panic => VariantOutput::Panic,
-            },
+            Some((_, expression)) => Some(VariantOutput::Expression(Box::new(expression))),
+            None => None,
         };
         outputs.push(output);
     }
 
-    let is_const = !has_runtime_output;
-    let return_type = return_type(&output, optional);
+    let ident = &item.ident;
+    let (impl_generics, type_generics, where_clause) = item.generics.split_for_impl();
+    if is_const && has_lambda {
+        return Err(Error::new_spanned(
+            &method,
+            "`const enum_fn` cannot use lambda expressions",
+        ));
+    }
+    let constness = is_const.then(|| quote!(const));
+    let (return_type, method_lifetime, receiver_lifetime, borrow) = if has_lambda {
+        let written_names = fresh_name::written_identifiers(quote!(#item #output));
+        let borrow_name = fresh_name::fresh_name("__enum_fn_borrow", &written_names);
+        let borrow = Lifetime::new(&format!("'{borrow_name}"), Span::mixed_site());
+        let mut return_type = output;
+        BorrowedReturn { borrow: &borrow }.visit_type_mut(&mut return_type);
+        (
+            return_type,
+            quote!(<#borrow>),
+            quote!(#borrow),
+            Some(borrow),
+        )
+    } else {
+        (output, quote!(), quote!(), None)
+    };
     let arms = item
         .variants
         .iter()
         .zip(&outputs)
-        .map(|(variant, variant_output)| accessor_arm(variant, variant_output, optional))
-        .collect::<Vec<_>>();
-    let ident = &item.ident;
-    let (impl_generics, type_generics, where_clause) = item.generics.split_for_impl();
-    let method_documentation = LitStr::new(
-        &format!("Returns this variant's `{method}` value generated by `enum_fn`."),
-        method.span(),
-    );
-    let method = if is_const {
-        quote! {
-            #[doc = #method_documentation]
-            #visibility const fn #method(&self) -> #return_type {
-                match self {
-                    #(#arms),*
-                }
-            }
-        }
+        .filter_map(|(variant, output)| {
+            output
+                .as_ref()
+                .map(|output| accessor_arm(variant, output, borrow.as_ref()))
+        });
+    let method_attributes = if method_attributes.iter().any(|attribute| {
+        attribute.path().is_ident("doc") && matches!(&attribute.meta, Meta::NameValue(_))
+    }) {
+        quote!(#(#method_attributes)*)
     } else {
-        quote! {
-            #[doc = #method_documentation]
-            #visibility fn #method(&self) -> #return_type {
-                match self {
-                    #(#arms),*
-                }
+        quote!(#[allow(missing_docs)] #(#method_attributes)*)
+    };
+    let method = quote! {
+        #method_attributes
+        #visibility #constness fn #method #method_lifetime (& #receiver_lifetime self) -> #return_type {
+            match self {
+                #(#arms,)*
+                #[allow(unreachable_patterns)]
+                _ => #missing,
             }
         }
     };
 
+    let impl_attrs = conditional_attrs(&item.attrs);
     Ok(quote! {
         #item
+        #(#impl_attrs)*
         impl #impl_generics #ident #type_generics #where_clause {
             #method
         }
     })
 }
 
-/// Builds the accessor return type after every variant has been inspected.
-fn return_type(output: &Type, optional: bool) -> Type {
-    if !optional {
-        output.clone()
-    } else {
-        parse2(quote!(::core::option::Option<#output>))
-            .expect("wrapping a parsed type in Option remains a valid type")
+/// Checks that a mapping lambda describes exactly the variant's product.
+fn validate_closure(fields: &Fields, closure: &ExprClosure) -> syn::Result<()> {
+    if closure.inputs.len() != fields.len() {
+        return Err(Error::new_spanned(
+            &closure.inputs,
+            format!(
+                "expected {} lambda argument(s), one per variant field; found {}",
+                fields.len(),
+                closure.inputs.len()
+            ),
+        ));
     }
-}
-
-/// Reports whether an explicit expression asks Rust to const-check the method.
-fn expression_preserves_const(expression: &Expr) -> bool {
-    matches!(expression, Expr::Const(_) | Expr::Lit(_) | Expr::Path(_))
-}
-
-/// Recognizes `const { |...| ... }` as the stable const-closure marker.
-fn const_closure(mut expression: ExprConst) -> Result<ExprClosure, ExprConst> {
-    let [Stmt::Expr(Expr::Closure(closure), None)] = expression.block.stmts.as_mut_slice() else {
-        return Err(expression);
-    };
-    let mut closure = closure.clone();
-    closure.constness = Some(expression.const_token);
-    Ok(closure)
+    if let Fields::Named(fields) = fields {
+        for (field, input) in fields.named.iter().zip(&closure.inputs) {
+            let pattern = match input {
+                Pat::Type(typed) => &*typed.pat,
+                pattern => pattern,
+            };
+            let name = field.ident.as_ref().expect("named field has an identifier");
+            if !matches!(pattern, Pat::Ident(binding) if binding.ident == *name && binding.subpat.is_none())
+            {
+                return Err(Error::new_spanned(
+                    input,
+                    format!(
+                        "expected lambda argument `{name}` matching the named field in declaration order"
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Builds one match arm from its variant and selected operation.
-fn accessor_arm(variant: &Variant, output: &VariantOutput, optional: bool) -> TokenStream {
+fn accessor_arm(
+    variant: &Variant,
+    output: &VariantOutput,
+    borrow: Option<&Lifetime>,
+) -> TokenStream {
     let attrs = conditional_attrs(&variant.attrs);
     let (pattern, expression) = match output {
         VariantOutput::Expression(value) => (
             variant_pattern(&variant.ident, &variant.fields),
-            optional_value(quote!(#value), optional),
-        ),
-        VariantOutput::Member(member) => {
-            let (pattern, source) = member_access(variant, member);
-            (pattern, optional_value(source, optional))
-        }
-        VariantOutput::None => (
-            variant_pattern(&variant.ident, &variant.fields),
-            quote!(::core::option::Option::None),
+            quote!(#value),
         ),
         VariantOutput::Call(closure) => {
-            let (pattern, value) = closure_arm(&variant.ident, &variant.fields, closure);
-            (pattern, optional_value(value, optional))
-        }
-        VariantOutput::Panic => {
-            let message = LitStr::new(
-                &format!("variant `{}` has no generated value", variant.ident),
-                variant.ident.span(),
-            );
-            (
-                variant_pattern(&variant.ident, &variant.fields),
-                quote!(::core::panic!(#message)),
-            )
+            let borrow = borrow.expect("lambda outputs have a generated borrow lifetime");
+            let (pattern, value) = closure_arm(&variant.ident, &variant.fields, closure, borrow);
+            (pattern, value)
         }
     };
 
     quote!(#(#attrs)* #pattern => #expression)
-}
-
-/// Builds a compact pattern and borrowed expression for a selected member.
-fn member_access(variant: &Variant, member: &Member) -> (TokenStream, TokenStream) {
-    match member {
-        Member::Unnamed(index) => {
-            let ident = &variant.ident;
-            if matches!(
-                &variant.fields,
-                Fields::Unnamed(fields)
-                    if fields.unnamed.len() == 1
-                        && matches!(ungroup::ty(&fields.unnamed[0].ty), Type::Tuple(_))
-            ) {
-                (quote!(Self::#ident { 0: value, .. }), quote!(&value.#index))
-            } else {
-                (quote!(Self::#ident { #index: value, .. }), quote!(value))
-            }
-        }
-        Member::Named(name) => {
-            let ident = &variant.ident;
-            (quote!(Self::#ident { #name: value, .. }), quote!(value))
-        }
-    }
 }
 
 /// Lowers a mapping closure with hygienic bindings for every variant field.
@@ -328,6 +243,7 @@ fn closure_arm(
     variant: &Ident,
     fields: &Fields,
     closure: &ExprClosure,
+    borrow: &Lifetime,
 ) -> (TokenStream, TokenStream) {
     let bindings: Vec<_> = (0..fields.iter().count())
         .map(|index| Ident::new(&format!("__enum_fn_field_{index}"), Span::mixed_site()))
@@ -346,41 +262,13 @@ fn closure_arm(
             quote!(Self::#variant { #(#entries),* })
         }
     };
-    let value = if closure.constness.is_some() {
-        inline_const_closure(closure, &bindings)
-    } else {
-        let closure = typed_closure(fields, closure);
-        quote!((#closure)(#(#bindings),*))
-    };
-
+    let closure = typed_closure(fields, closure, borrow);
+    let value = quote!((#closure)(#(#bindings),*));
     (pattern, value)
 }
 
-/// Inlines an explicitly const closure so stable Rust never needs to call it.
-fn inline_const_closure(closure: &ExprClosure, fields: &[Ident]) -> TokenStream {
-    let arguments: Vec<_> = (0..closure.inputs.len())
-        .map(|index| Ident::new(&format!("__enum_fn_argument_{index}"), Span::mixed_site()))
-        .collect();
-    let inputs: Vec<_> = closure.inputs.iter().collect();
-    let body = &closure.body;
-    let result = Ident::new("__enum_fn_result", Span::mixed_site());
-    let expression = match &closure.output {
-        syn::ReturnType::Default => quote!(#body),
-        syn::ReturnType::Type(_, ty) => quote!({
-            let #result: #ty = #body;
-            #result
-        }),
-    };
-
-    quote!({
-        let (#(#arguments,)*) = (#(#fields,)*);
-        #(let #inputs = #arguments;)*
-        #expression
-    })
-}
-
 /// Supplies field-reference types for closure inputs that the user left untyped.
-fn typed_closure(fields: &Fields, closure: &ExprClosure) -> ExprClosure {
+fn typed_closure(fields: &Fields, closure: &ExprClosure, borrow: &Lifetime) -> ExprClosure {
     let mut closure = closure.clone();
     for (input, field) in closure.inputs.iter_mut().zip(fields) {
         if matches!(input, Pat::Type(_)) {
@@ -389,19 +277,10 @@ fn typed_closure(fields: &Fields, closure: &ExprClosure) -> ExprClosure {
 
         let pattern = input.clone();
         let ty = &field.ty;
-        let typed: PatType = parse_quote_spanned!(pattern.span()=> #pattern: &#ty);
+        let typed: PatType = parse_quote_spanned!(pattern.span()=> #pattern: &#borrow #ty);
         *input = Pat::Type(typed);
     }
     closure
-}
-
-/// Wraps a present value in `Some` when optional output was inferred.
-fn optional_value(value: TokenStream, optional: bool) -> TokenStream {
-    if optional {
-        quote!(::core::option::Option::Some(#value))
-    } else {
-        value
-    }
 }
 
 /// Builds a non-binding match pattern for a variant.
@@ -413,11 +292,68 @@ fn variant_pattern(ident: &Ident, fields: &Fields) -> TokenStream {
     }
 }
 
-/// Retains attributes that can control whether the corresponding variant exists.
-fn conditional_attrs(attrs: &[Attribute]) -> impl Iterator<Item = &Attribute> {
-    attrs.iter().filter(|attribute| {
-        attribute.path().is_ident("cfg") || attribute.path().is_ident("cfg_attr")
-    })
+/// Names elided return-reference lifetimes consistently with the receiver.
+struct BorrowedReturn<'a> {
+    /// Lifetime of the generated shared receiver.
+    borrow: &'a Lifetime,
+}
+
+impl VisitMut for BorrowedReturn<'_> {
+    fn visit_type_reference_mut(&mut self, reference: &mut syn::TypeReference) {
+        if reference.lifetime.is_none()
+            || reference
+                .lifetime
+                .as_ref()
+                .is_some_and(|lifetime| lifetime.ident == "_")
+        {
+            reference.lifetime = Some(self.borrow.clone());
+        }
+        visit_mut::visit_type_reference_mut(self, reference);
+    }
+
+    fn visit_type_fn_ptr_mut(&mut self, _: &mut syn::TypeFnPtr) {}
+
+    fn visit_parenthesized_generic_arguments_mut(
+        &mut self,
+        _: &mut syn::ParenthesizedGenericArguments,
+    ) {
+    }
+}
+
+/// Retains only conditional compilation, including nested `cfg_attr` conditions.
+fn conditional_attrs(attrs: &[Attribute]) -> Vec<Attribute> {
+    attrs
+        .iter()
+        .filter_map(|attribute| {
+            let meta = conditional_meta(&attribute.meta)?;
+            Some(parse_quote_spanned!(attribute.span()=> #[#meta]))
+        })
+        .collect()
+}
+
+/// Removes variant-only metadata from a conditional attribute before forwarding it.
+fn conditional_meta(meta: &Meta) -> Option<Meta> {
+    if meta.path().is_ident("cfg") {
+        return Some(meta.clone());
+    }
+    let Meta::List(list) = meta else {
+        return None;
+    };
+    if !list.path.is_ident("cfg_attr") {
+        return None;
+    }
+    let arguments = list
+        .parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
+        .ok()?;
+    let mut arguments = arguments.iter();
+    let condition = arguments.next()?;
+    let attributes: Vec<_> = arguments.filter_map(conditional_meta).collect();
+    if attributes.is_empty() {
+        return None;
+    }
+    let mut filtered = list.clone();
+    filtered.tokens = quote!(#condition, #(#attributes),*);
+    Some(Meta::List(filtered))
 }
 
 /// Parser and diagnostic tests that do not require a downstream crate.
@@ -427,37 +363,185 @@ mod tests {
 
     use super::enum_fn;
 
-    /// Tuple selectors are checked against the actual variant product.
+    /// Missing values are arbitrary expressions, with one documented option.
     #[test]
-    fn rejects_an_out_of_range_tuple_selector() {
-        let output = enum_fn(
+    fn validates_named_options() {
+        let item = quote!(
+            enum Value {
+                Missing,
+            }
+        );
+        for arguments in [
             quote!(value -> usize),
-            quote! {
-                enum Value {
-                    Pair(usize, usize) = 2,
-                }
-            },
-        )
-        .to_string();
-
-        assert!(output.contains("tuple field index `2` is out of range"));
-        assert!(output.contains("variant `Pair` with 2 field(s)"));
+            quote!(const value -> usize),
+            quote!(value -> Option<usize>, missing = None),
+            quote!(value -> usize, missing = 42,),
+            quote!(pub value -> usize, missing = panic!("missing")),
+            quote!(value -> usize, missing = { let base = 3; base * 2 }),
+        ] {
+            let output = enum_fn(arguments, item.clone()).to_string();
+            assert!(!output.contains("compile_error"), "{output}");
+        }
+        for (arguments, message) in [
+            (quote!(value -> usize, fallback = 0), "unknown option"),
+            (
+                quote!(value -> usize, missing = 1, missing = 2),
+                "duplicate `missing` option",
+            ),
+            (quote!(value -> usize = panic), "expected `,`"),
+        ] {
+            let output = enum_fn(arguments, item.clone()).to_string();
+            assert!(output.contains(message), "{output}");
+        }
     }
 
-    /// Only the two documented missing-arm strategies are accepted.
+    /// Constness is an explicit method modifier, and const accessors reject lambdas.
     #[test]
-    fn rejects_an_unknown_missing_arm_strategy() {
-        let output = enum_fn(
-            quote!(value -> usize = default),
-            quote! {
+    fn validates_explicit_constness() {
+        let item = quote!(
+            enum Value {
+                Present = 1,
+            }
+        );
+        let constant = enum_fn(quote!(const value -> usize), item.clone()).to_string();
+        let runtime = enum_fn(quote!(value -> usize), item).to_string();
+
+        assert!(constant.contains("const fn value"));
+        assert!(runtime.contains("] fn value"));
+
+        let lambda = enum_fn(
+            quote!(const value -> usize),
+            quote!(
                 enum Value {
-                    Missing,
+                    Dynamic(usize) = |value| *value,
                 }
-            },
+            ),
+        )
+        .to_string();
+        assert!(lambda.contains("const enum_fn` cannot use lambda"));
+    }
+
+    /// Fixed results preserve elided lifetimes and accept method-level attributes.
+    #[test]
+    fn emits_only_requested_method_documentation() {
+        let item = quote!(
+            #[doc = "Enum documentation"]
+            enum Value {
+                Present = "value",
+            }
+        );
+        let documented = enum_fn(
+            quote!(#[doc = "Accessor documentation"] #[inline] value -> &str),
+            item.clone(),
         )
         .to_string();
 
-        assert!(output.contains("expected `stringify` or `panic`"));
+        assert!(documented.contains("Accessor documentation"));
+        assert!(documented.contains("inline"));
+        assert!(documented.contains("fn value (& self) -> & str"));
+        assert!(!documented.contains("__enum_fn_borrow"));
+        assert!(!documented.contains("Returns this variant"));
+        assert!(documented.contains("Enum documentation"));
+
+        let undocumented = enum_fn(quote!(value -> &str), item).to_string();
+        assert!(undocumented.contains("allow (missing_docs)"));
+        assert!(!undocumented.contains("Returns this variant"));
+
+        let borrowed = enum_fn(
+            quote!(value -> &str),
+            quote!(
+                enum Borrowed {
+                    Text(String) = |text| text.as_str(),
+                }
+            ),
+        )
+        .to_string();
+        assert!(borrowed.contains("__enum_fn_borrow"));
+    }
+
+    /// Lambda arguments describe the variant fields without renaming named fields.
+    #[test]
+    fn validates_lambda_signatures() {
+        for item in [
+            quote!(
+                enum Value {
+                    Named { code: u8 } = |code| *code,
+                }
+            ),
+            quote!(
+                enum Value {
+                    Named { code: u8 } = |code: &u8| *code,
+                }
+            ),
+            quote!(
+                enum Value {
+                    Tuple(u8, u8) = |x, y| *x + *y,
+                }
+            ),
+            quote!(
+                enum Value {
+                    Empty {} = || 1,
+                }
+            ),
+            quote!(
+                enum Value {
+                    Empty() = || 1,
+                }
+            ),
+            quote!(
+                enum Value {
+                    Unit = || 1,
+                }
+            ),
+        ] {
+            let output = enum_fn(quote!(value -> u8), item).to_string();
+            assert!(!output.contains("compile_error"), "{output}");
+        }
+        for (item, message) in [
+            (
+                quote!(
+                    enum Value {
+                        Named { code: u8 } = |c| *c,
+                    }
+                ),
+                "expected lambda argument `code`",
+            ),
+            (
+                quote!(
+                    enum Value {
+                        Named { code: u8 } = |_| 1,
+                    }
+                ),
+                "expected lambda argument `code`",
+            ),
+            (
+                quote!(
+                    enum Value {
+                        Named { x: u8, y: u8 } = |y, x| *x + *y,
+                    }
+                ),
+                "expected lambda argument `x`",
+            ),
+            (
+                quote!(
+                    enum Value {
+                        Tuple(u8, u8) = |x| x.0 + x.1,
+                    }
+                ),
+                "expected 2 lambda argument(s)",
+            ),
+            (
+                quote!(
+                    enum Value {
+                        Unit = |x| x,
+                    }
+                ),
+                "expected 0 lambda argument(s)",
+            ),
+        ] {
+            let output = enum_fn(quote!(value -> u8), item).to_string();
+            assert!(output.contains(message), "{output}");
+        }
     }
 
     /// The attribute is deliberately restricted to an enum item.
@@ -483,9 +567,14 @@ mod tests {
             }
         };
         let public = enum_fn(quote!(pub(crate) value -> usize), item.clone()).to_string();
+        let const_public =
+            enum_fn(quote!(pub(crate) const value -> usize), item.clone()).to_string();
+        let constant = enum_fn(quote!(const value -> usize), item.clone()).to_string();
         let private = enum_fn(quote!(value -> usize), item).to_string();
 
-        assert!(public.contains("pub (crate) const fn value"));
-        assert!(private.contains("] const fn value"));
+        assert!(public.contains("pub (crate) fn value"));
+        assert!(const_public.contains("pub (crate) const fn value"));
+        assert!(constant.contains("const fn value"));
+        assert!(private.contains("] fn value"));
     }
 }
