@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.12.1 - 2026-10-28
+
+### Added
+
+- `#[forall]` members can keep out of the prefix with `#[forall(skip)]`, or
+  keep out only some fragments with `#[forall(skip(fragments))]`. The marker is
+  inert and is read by every stacked `forall`. The last one removes it.
+
 ## 0.12.0 - 2026-10-26
 
 ### Changed

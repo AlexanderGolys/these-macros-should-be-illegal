@@ -39,3 +39,19 @@ pub enum Stage {
     Parse,
     Lower { depth: usize },
 }
+
+#[forall(#[doc = "One shared field."] pub)]
+pub struct Partial {
+    width: u32,
+    #[forall(skip)]
+    height: u32,
+    #[forall(skip(pub))]
+    depth: u32,
+}
+
+#[forall(u16, String)]
+pub enum Reply {
+    Moved,
+    #[forall(skip(String))]
+    Empty,
+}

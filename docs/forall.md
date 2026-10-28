@@ -116,6 +116,76 @@ holding unnamed fields takes the shared types, and a variant naming its fields
 takes the shared named ones. The other combination is rejected, as is a variant
 with a discriminant, which cannot hold fields at all.
 
+## Keeping a member out
+
+A member that should not take the prefix carries `#[forall(skip)]`. To keep
+out only some of it, list those fragments, written exactly as in the prefix:
+
+```rust,pane="You write"
+# #[macro_use] extern crate these_macros_should_be_illegal;
+#[forall(#[doc = "Shared state."] #[serde(default)] pub)]
+#[derive(serde::Deserialize)]
+struct Config {
+    retries: u8,
+    #[forall(skip(#[serde]))]
+    /// Must always be given.
+    endpoint: String,
+    #[forall(skip)]
+    cache: Vec<u8>,
+}
+```
+
+```rust,ignore,pane="Roughly expands to"
+struct Config {
+    /// Shared state.
+    #[serde(default)]
+    pub retries: u8,
+    /// Shared state.
+    /// Must always be given.
+    pub endpoint: String,
+    cache: Vec<u8>,
+}
+```
+
+An attribute written as a bare path, like `#[serde]` above, skips every shared
+attribute of that path, while one written in full skips only its identical
+twin. On an enum the shared fields are skipped the same way, which leaves room
+for a variant that holds none of them:
+
+```rust,pane="You write"
+# #[macro_use] extern crate these_macros_should_be_illegal;
+#[forall(u16, String)]
+enum Reply {
+    Moved,
+    #[forall(skip(String))]
+    Empty,
+    #[forall(skip)]
+    Unknown,
+}
+```
+
+```rust,ignore,pane="Roughly expands to"
+enum Reply {
+    Moved(u16, String),
+    Empty(u16),
+    Unknown,
+}
+```
+
+The marker is inert: every `forall` stacked on the item reads it, and the last
+one removes it. One marker therefore speaks to all of them, and each prefix
+skips only the fragments it distributes:
+
+```rust
+# #[macro_use] extern crate these_macros_should_be_illegal;
+#[forall(pub)]
+#[forall(u8)]
+struct Range(start, #[forall(skip(pub))] end);
+```
+
+A field named from its tuple position must still take the shared type, so it
+can skip the other fragments but not the type itself.
+
 ## Generated documentation
 
 A named field that `forall` creates is documented where the declaration
@@ -170,5 +240,7 @@ Every rejection names the member it is about:
 - a prefix for an item without a single field or variant to repeat it on;
 - a type where a bare field name is expected, which is what a tuple position
   means once the prefix names the shared type;
+- a member marker holding anything but `skip` or `skip(fragments)`, or one
+  skipping the shared type of a field named from its tuple position;
 - an inner attribute, a second visibility, a second group of named fields, or a
   group naming no field at all.

@@ -395,6 +395,15 @@ make_attr! {
     /// documents none, which keeps the generated braced struct usable under
     /// `#![deny(missing_docs)]`.
     ///
+    /// A member keeps out of the prefix with an inert `#[forall(skip)]` marker,
+    /// which skips every fragment, or `#[forall(skip(fragments))]`, whose
+    /// fragments are written like a prefix and skip the identical distributed
+    /// ones. An attribute written as a bare path, like `#[doc]`, skips every
+    /// distributed attribute of that path, and a group of named fields skips the
+    /// shared fields by their names. Each stacked `forall` reads the same markers
+    /// and the last one removes them, so a fragment no prefix distributes is
+    /// ignored. A field named from its tuple position cannot skip the shared type.
+    ///
     /// A prefix forwarded by a declarative macro is read like one written
     /// directly: `#[forall($(#[$attribute])* $visibility $shared)]` takes its
     /// parts from `meta`, `vis` and `ty` fragments, including a `vis` fragment
@@ -434,12 +443,23 @@ make_attr! {
     /// #[forall(#[doc = "One stage of the pipeline."])]
     /// enum Stage { Parse, Lower }
     ///
+    /// #[forall(u16, String)]
+    /// enum Reply {
+    ///     Moved,
+    ///     #[forall(skip(String))]
+    ///     Empty,
+    ///     #[forall(skip)]
+    ///     Unknown,
+    /// }
+    ///
     /// let point = Point { x: 0.25, y: 0.75 };
     /// let response = Response::Error(404, String::from("missing"));
     ///
     /// assert_eq!(point.x + point.y, 1.0);
     /// assert!(matches!(response, Response::Error(404, _)));
     /// assert!(matches!(Stage::Lower, Stage::Lower));
+    /// assert!(matches!(Reply::Empty(204), Reply::Empty(204)));
+    /// assert!(matches!(Reply::Unknown, Reply::Unknown));
     /// ```
     forall
 }

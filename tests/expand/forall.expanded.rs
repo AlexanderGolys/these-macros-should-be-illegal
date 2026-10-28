@@ -56,3 +56,14 @@ pub enum Stage {
     ///One stage of the pipeline.
     Lower { depth: usize },
 }
+pub struct Partial {
+    ///One shared field.
+    pub width: u32,
+    height: u32,
+    ///One shared field.
+    depth: u32,
+}
+pub enum Reply {
+    Moved(u16, String),
+    Empty(u16),
+}

@@ -1,10 +1,13 @@
 //! One shared declaration prefix repeated on every field or variant of a data item.
 
+use std::ops::BitOr;
+
 use proc_macro2::TokenStream;
-use quote::quote;
+use quote::{ToTokens, quote};
 use syn::{
     Attribute, Data, DeriveInput, Error, Field, Fields, FieldsNamed, FieldsUnnamed, Ident, LitStr,
-    Token, Type, Variant, Visibility, parse_quote, parse2, punctuated::Punctuated,
+    Meta, Path, Token, Type, Variant, Visibility, parenthesized, parse_quote, parse2,
+    punctuated::Punctuated,
 };
 
 use crate::helpers::ungroup;
@@ -14,6 +17,15 @@ use syn::{
     parse::{Parse, ParseStream},
     token::Brace,
 };
+
+/// Name of the macro, which also names the markers it reads on members.
+const MACRO_NAME: &str = "forall";
+
+mod keyword {
+    //! The word opening a member marker.
+
+    syn::custom_keyword!(skip);
+}
 
 /// The constant leading part of a member declaration: `#[attribute] pub Type`.
 struct MemberPrefix {
@@ -137,6 +149,140 @@ fn skipped_empty_fragment(input: ParseStream) -> bool {
         .is_ok()
 }
 
+/// The fragments of the prefix one member keeps out, read from its `#[forall(skip)]` markers.
+enum Exclusion {
+    /// The member takes nothing from any prefix.
+    Everything,
+    /// The member takes every fragment but the ones written in its markers.
+    Fragments(Vec<MemberPrefix>),
+}
+
+/// What becomes of the member markers once one prefix has read them.
+#[derive(Clone, Copy)]
+enum Markers {
+    /// Another `forall` below this one reads the same markers.
+    Kept,
+    /// This is the last `forall` on the item, so the markers are removed.
+    Removed,
+}
+
+impl Parse for Exclusion {
+    /// Parses `skip`, or `skip(fragments)` written like a prefix.
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        input.parse::<keyword::skip>()?;
+        if input.is_empty() {
+            return Ok(Self::Everything);
+        }
+        let fragments;
+        parenthesized!(fragments in input);
+
+        Ok(Self::Fragments(vec![fragments.parse()?]))
+    }
+}
+
+impl Default for Exclusion {
+    /// Excludes nothing, as for a member without markers.
+    fn default() -> Self {
+        Self::Fragments(Vec::new())
+    }
+}
+
+impl BitOr for Exclusion {
+    type Output = Self;
+
+    /// Excludes what either side excludes.
+    fn bitor(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Fragments(mut own), Self::Fragments(other)) => {
+                own.extend(other);
+                Self::Fragments(own)
+            }
+            _ => Self::Everything,
+        }
+    }
+}
+
+impl Exclusion {
+    /// Reads every marker of one member, removing them when no `forall` follows.
+    fn read(attributes: &mut Vec<Attribute>, markers: Markers) -> syn::Result<Self> {
+        let exclusion = attributes
+            .iter()
+            .filter(|attribute| names_forall(attribute.path()))
+            .try_fold(Self::default(), |exclusion, marker| {
+                Ok::<_, Error>(exclusion | marker.parse_args()?)
+            })?;
+        if let Markers::Removed = markers {
+            attributes.retain(|attribute| !names_forall(attribute.path()));
+        }
+
+        Ok(exclusion)
+    }
+
+    /// Tells whether no marker names a fragment the predicate recognizes.
+    fn keeps(&self, skipped_by: impl Fn(&MemberPrefix) -> bool) -> bool {
+        match self {
+            Self::Everything => false,
+            Self::Fragments(skipped) => !skipped.iter().any(skipped_by),
+        }
+    }
+
+    /// Keeps an attribute unless a marker repeats it, or names its path alone.
+    fn keeps_attribute(&self, attribute: &Attribute) -> bool {
+        self.keeps(|skipped| {
+            skipped
+                .attributes
+                .iter()
+                .any(|written| match &written.meta {
+                    Meta::Path(path) => same_tokens(path, attribute.path()),
+                    _ => same_tokens(written, attribute),
+                })
+        })
+    }
+
+    /// Keeps the visibility unless a marker repeats it.
+    fn keeps_visibility(&self, visibility: &Visibility) -> bool {
+        self.keeps(|skipped| {
+            skipped
+                .visibility
+                .as_ref()
+                .is_some_and(|written| same_tokens(written, visibility))
+        })
+    }
+
+    /// Keeps a shared type unless a marker repeats it.
+    fn keeps_type(&self, shared: &Type) -> bool {
+        self.keeps(|skipped| match &skipped.shared {
+            SharedFields::Unnamed(types) => types
+                .iter()
+                .any(|written| same_tokens(ungroup::ty(written), ungroup::ty(shared))),
+            _ => false,
+        })
+    }
+
+    /// Keeps a shared named field unless a marker names a field of the same name.
+    fn keeps_field(&self, shared: &Field) -> bool {
+        self.keeps(|skipped| match &skipped.shared {
+            SharedFields::Named(group) => group
+                .named
+                .iter()
+                .any(|written| written.ident == shared.ident),
+            _ => false,
+        })
+    }
+}
+
+/// Recognizes `forall` by the last segment of the path it is invoked through.
+fn names_forall(path: &Path) -> bool {
+    path.segments
+        .last()
+        .is_some_and(|segment| segment.ident == MACRO_NAME)
+}
+
+/// Compares two fragments by the tokens they are written with.
+fn same_tokens(left: &impl ToTokens, right: &impl ToTokens) -> bool {
+    left.to_token_stream().to_string() == right.to_token_stream().to_string()
+}
+
 /// Repeats one shared member declaration prefix over every field or variant.
 pub fn forall(arguments: TokenStream, item: TokenStream) -> TokenStream {
     let result = parse2::<MemberPrefix>(arguments)
@@ -150,6 +296,15 @@ pub fn forall(arguments: TokenStream, item: TokenStream) -> TokenStream {
 impl MemberPrefix {
     /// Rewrites every member of one struct, union or enum with the shared prefix.
     fn distribute(&self, item: &mut DeriveInput) -> syn::Result<()> {
+        let markers = if item
+            .attrs
+            .iter()
+            .any(|attribute| names_forall(attribute.path()))
+        {
+            Markers::Kept
+        } else {
+            Markers::Removed
+        };
         let owner = &item.ident;
         match &mut item.data {
             Data::Struct(data) => {
@@ -160,12 +315,16 @@ impl MemberPrefix {
                     return Err(variant_fields_only(group));
                 }
                 match self.shared_type(owner)? {
-                    None => data.fields.iter_mut().for_each(|field| self.apply(field)),
+                    None => {
+                        for field in &mut data.fields {
+                            self.apply(field, markers)?;
+                        }
+                    }
                     Some(shared) => {
                         let Fields::Unnamed(names) = &data.fields else {
                             return Err(fields_already_typed(shared, owner));
                         };
-                        let named = self.name_fields(names, shared, owner)?;
+                        let named = self.name_fields(names, shared, owner, markers)?;
                         data.fields = Fields::Named(named);
                     }
                 }
@@ -180,10 +339,9 @@ impl MemberPrefix {
                 if let Some(shared) = self.shared_type(owner)? {
                     return Err(fields_already_typed(shared, owner));
                 }
-                data.fields
-                    .named
-                    .iter_mut()
-                    .for_each(|field| self.apply(field));
+                for field in &mut data.fields.named {
+                    self.apply(field, markers)?;
+                }
             }
             Data::Enum(data) => {
                 if data.variants.is_empty() {
@@ -196,7 +354,7 @@ impl MemberPrefix {
                     ));
                 }
                 for variant in &mut data.variants {
-                    self.extend(variant, owner)?;
+                    self.extend(variant, owner, markers)?;
                 }
             }
         }
@@ -223,34 +381,65 @@ impl MemberPrefix {
     }
 
     /// Adds the shared attributes to one field and fills in its implicit visibility.
-    fn apply(&self, field: &mut Field) {
-        field.attrs = self.inherited_by(std::mem::take(&mut field.attrs));
+    fn apply(&self, field: &mut Field, markers: Markers) -> syn::Result<()> {
+        let exclusion = Exclusion::read(&mut field.attrs, markers)?;
+        self.apply_except(field, &exclusion);
+
+        Ok(())
+    }
+
+    /// Adds the shared attributes and visibility the field does not exclude.
+    fn apply_except(&self, field: &mut Field, exclusion: &Exclusion) {
+        field.attrs = self.inherited_by(std::mem::take(&mut field.attrs), exclusion);
         if matches!(field.vis, Visibility::Inherited)
             && let Some(visibility) = &self.visibility
+            && exclusion.keeps_visibility(visibility)
         {
             field.vis = visibility.clone();
         }
     }
 
     /// Adds the shared attributes to one variant and the shared fields to its own.
-    fn extend(&self, variant: &mut Variant, owner: &Ident) -> syn::Result<()> {
-        variant.attrs = self.inherited_by(std::mem::take(&mut variant.attrs));
+    fn extend(&self, variant: &mut Variant, owner: &Ident, markers: Markers) -> syn::Result<()> {
+        let exclusion = Exclusion::read(&mut variant.attrs, markers)?;
+        variant.attrs = self.inherited_by(std::mem::take(&mut variant.attrs), &exclusion);
         match &self.shared {
             SharedFields::Declared => Ok(()),
             SharedFields::Unnamed(types) => {
+                let kept = types
+                    .iter()
+                    .filter(|shared| exclusion.keeps_type(shared))
+                    .collect::<Vec<_>>();
+                if kept.is_empty() {
+                    return Ok(());
+                }
                 reject_discriminant(variant)?;
-                append_types(variant, types)
+                append_types(variant, &kept)
             }
             SharedFields::Named(group) => {
+                let kept = group
+                    .named
+                    .iter()
+                    .filter(|shared| exclusion.keeps_field(shared))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if kept.is_empty() {
+                    return Ok(());
+                }
                 reject_discriminant(variant)?;
-                add_named_fields(variant, group, owner)
+                add_named_fields(variant, kept, owner)
             }
         }
     }
 
-    /// Puts the shared attributes in front of the ones a member declares itself.
-    fn inherited_by(&self, own: Vec<Attribute>) -> Vec<Attribute> {
-        self.attributes.iter().cloned().chain(own).collect()
+    /// Puts the shared attributes not excluded in front of the ones a member declares itself.
+    fn inherited_by(&self, own: Vec<Attribute>, exclusion: &Exclusion) -> Vec<Attribute> {
+        self.attributes
+            .iter()
+            .filter(|attribute| exclusion.keeps_attribute(attribute))
+            .cloned()
+            .chain(own)
+            .collect()
     }
 
     /// Rewrites bare names written in tuple position as named fields of one shared type.
@@ -259,6 +448,7 @@ impl MemberPrefix {
         names: &FieldsUnnamed,
         shared: &Type,
         owner: &Ident,
+        markers: Markers,
     ) -> syn::Result<FieldsNamed> {
         let mut named = Punctuated::<Field, Token![,]>::new();
         for position in &names.unnamed {
@@ -266,7 +456,17 @@ impl MemberPrefix {
             let mut field: Field = parse_quote!(#name: #shared);
             field.attrs = position.attrs.clone();
             field.vis = position.vis.clone();
-            self.apply(&mut field);
+            let exclusion = Exclusion::read(&mut field.attrs, markers)?;
+            if !exclusion.keeps_type(shared) {
+                return Err(Error::new_spanned(
+                    position,
+                    format!(
+                        "field `{name}` is named from its tuple position, so it must take the shared type; \
+                         name the fragments to skip with `skip(...)`"
+                    ),
+                ));
+            }
+            self.apply_except(&mut field, &exclusion);
             document_created_field(&mut field, &owner.to_string(), &name);
             named.push(field);
         }
@@ -276,7 +476,7 @@ impl MemberPrefix {
 }
 
 /// Appends one unnamed field per shared type to the fields of one variant.
-fn append_types(variant: &mut Variant, types: &[Type]) -> syn::Result<()> {
+fn append_types(variant: &mut Variant, types: &[&Type]) -> syn::Result<()> {
     match &mut variant.fields {
         Fields::Unnamed(fields) => {
             fields.unnamed.extend(
@@ -301,9 +501,12 @@ fn append_types(variant: &mut Variant, types: &[Type]) -> syn::Result<()> {
 }
 
 /// Adds the shared named fields to one variant, keeping the ones it declares.
-fn add_named_fields(variant: &mut Variant, group: &FieldsNamed, owner: &Ident) -> syn::Result<()> {
+fn add_named_fields(
+    variant: &mut Variant,
+    mut shared: Vec<Field>,
+    owner: &Ident,
+) -> syn::Result<()> {
     let scope = format!("{owner}::{}", variant.ident);
-    let mut shared = group.named.clone();
     for field in &mut shared {
         let name = field
             .ident
@@ -338,7 +541,7 @@ fn add_named_fields(variant: &mut Variant, group: &FieldsNamed, owner: &Ident) -
             ),
         )),
         Fields::Unit => {
-            variant.fields = Fields::Named(parse_quote!({ #shared }));
+            variant.fields = Fields::Named(parse_quote!({ #(#shared),* }));
             Ok(())
         }
     }
@@ -821,6 +1024,90 @@ mod tests {
         let output = distributed("'a", "struct S(a);");
 
         assert!(output.contains("compile_error"), "{output}");
+    }
+
+    /// A member marked with a bare `skip` takes nothing, and its marker is removed.
+    #[test]
+    fn skips_every_fragment_for_a_marked_member() {
+        let output = distributed(
+            r#"#[doc = "shared"] pub"#,
+            "struct S { a: u8, #[forall(skip)] b: u8 }",
+        );
+
+        assert!(
+            output.contains(r#"# [doc = "shared"] pub a : u8"#),
+            "{output}"
+        );
+        assert!(output.contains(", b : u8 }"), "{output}");
+        assert!(!output.contains("forall"), "{output}");
+    }
+
+    /// A marker naming fragments keeps the member taking the rest of the prefix.
+    #[test]
+    fn skips_the_named_fragments() {
+        let output = distributed(
+            r#"#[doc = "shared"] #[allow(dead_code)] pub"#,
+            "struct S { #[forall(skip(#[doc], pub))] a: u8 }",
+        );
+
+        assert!(
+            output.contains("{ # [allow (dead_code)] a : u8 }"),
+            "{output}"
+        );
+    }
+
+    /// An attribute written with arguments skips only the identical one.
+    #[test]
+    fn skips_an_attribute_by_its_arguments() {
+        let output = distributed(
+            r#"#[doc = "one"] #[doc = "two"]"#,
+            r#"enum E { #[forall(skip(#[doc = "one"]))] A }"#,
+        );
+
+        assert!(output.contains(r#"{ # [doc = "two"] A }"#), "{output}");
+    }
+
+    /// A variant skips some of the shared types, or the whole group of named fields.
+    #[test]
+    fn skips_shared_fields_of_a_variant() {
+        let types = distributed("u8, u16", "enum E { A, #[forall(skip(u8))] B }");
+        let group = distributed(
+            "{ code: u16, path: String }",
+            "enum E { #[forall(skip({ path: String }))] A, #[forall(skip)] B = 1 }",
+        );
+
+        assert!(types.contains("A (u8 , u16)"), "{types}");
+        assert!(types.contains("B (u16)"), "{types}");
+        assert!(group.contains("code : u16 }"), "{group}");
+        assert!(!group.contains("path"), "{group}");
+        assert!(group.contains("B = 1"), "{group}");
+    }
+
+    /// Markers stay for the `forall` below, which reads them too.
+    #[test]
+    fn keeps_the_markers_for_a_stacked_prefix() {
+        let output = distributed("pub", "#[forall(u8)] struct S(a, #[forall(skip(pub))] b);");
+
+        assert!(
+            output.contains("(pub a , # [forall (skip (pub))] b)"),
+            "{output}"
+        );
+    }
+
+    /// A field named from its tuple position cannot go without the shared type.
+    #[test]
+    fn rejects_skipping_the_type_of_a_named_position() {
+        let output = distributed("pub, u8", "struct S(a, #[forall(skip)] b);");
+
+        assert!(output.contains("must take the shared type"), "{output}");
+    }
+
+    /// A marker holds `skip` and nothing else.
+    #[test]
+    fn rejects_a_marker_without_skip() {
+        let output = distributed("pub", "struct S { #[forall(pub)] a: u8 }");
+
+        assert!(output.contains("expected `skip`"), "{output}");
     }
 
     /// The shared named fields may borrow the lifetimes of the enum.

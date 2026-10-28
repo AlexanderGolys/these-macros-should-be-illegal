@@ -1,5 +1,6 @@
 //! Consumer tests for repeating one declaration prefix over fields and variants.
 
+use serde::de::value::MapDeserializer;
 use these_macros_should_be_illegal::{discriminated_str, enum_fn, forall, qf};
 
 /// Tuple struct whose types all take the distributed visibility.
@@ -489,4 +490,88 @@ fn reads_forwarded_field_names() {
     let names = ForwardedNames { left: 1, right: 2 };
 
     assert_eq!(names.left + names.right, 3);
+}
+
+/// Struct whose last field keeps out the shared attribute and visibility.
+#[forall(#[serde(default)] pub)]
+#[derive(serde::Deserialize)]
+pub struct Partial {
+    /// Field taking the whole prefix.
+    pub shared: u8,
+    /// Field taking nothing from the prefix.
+    #[forall(skip)]
+    pub(crate) required: u8,
+}
+
+/// Enum whose discriminated variant keeps out the shared types.
+#[forall(u16, String)]
+#[derive(Debug, PartialEq)]
+pub enum Reply {
+    /// Variant holding both shared types.
+    Moved,
+    /// Variant holding only the shared code.
+    #[forall(skip(String))]
+    Empty,
+    /// Variant holding none of the shared fields.
+    #[forall(skip(u16, String))]
+    Unknown,
+}
+
+/// Struct whose marker is read by both stacked prefixes.
+#[forall(pub)]
+#[forall(#[doc = "Shared field."] u8)]
+pub struct Layered(
+    first,
+    #[forall(skip(pub, #[doc]))]
+    #[doc = "Own field."]
+    second,
+);
+
+mod layered {
+    //! Reads the field whose marker kept out the shared visibility.
+
+    /// Reads the private field from inside its module.
+    pub fn second(value: &super::Layered) -> u8 {
+        value.second
+    }
+
+    /// Builds one value where the private field is visible.
+    pub fn new(first: u8, second: u8) -> super::Layered {
+        super::Layered { first, second }
+    }
+}
+
+/// Deserializes one value from the given map entries.
+fn deserialized<T: for<'de> serde::Deserialize<'de>>(
+    entries: &[(&'static str, u8)],
+) -> Result<T, serde::de::value::Error> {
+    T::deserialize(MapDeserializer::new(entries.iter().copied()))
+}
+
+/// A skipped member takes no shared attribute, so a derive reads it as declared.
+#[test]
+fn skips_the_prefix_for_a_marked_field() {
+    let partial = deserialized::<Partial>(&[("required", 3)]);
+    let missing = deserialized::<Partial>(&[("shared", 3)]);
+
+    assert!(partial.is_ok_and(|partial| partial.shared == 0 && partial.required == 3));
+    assert!(missing.is_err());
+}
+
+/// Variants keep out the shared types their markers name.
+#[test]
+fn skips_shared_types_of_marked_variants() {
+    let moved = Reply::Moved(301, String::from("/new"));
+
+    assert!(matches!(moved, Reply::Moved(301, _)));
+    assert_eq!(Reply::Empty(204), Reply::Empty(204));
+    assert_eq!(Reply::Unknown, Reply::Unknown);
+}
+
+/// Every stacked prefix reads the marker, and the last one removes it.
+#[test]
+fn reads_a_marker_under_stacked_prefixes() {
+    let value = layered::new(1, 2);
+
+    assert_eq!(value.first + layered::second(&value), 3);
 }
