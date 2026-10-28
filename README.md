@@ -121,7 +121,7 @@ tuple struct given one shared type has its positions read as field names.
 after its own field, while every variant of `Request` gains the named `code`.
 A member keeps the visibility it declares itself, and a created named field is
 documented unless the declaration documents it. A member marked
-`#[forall(skip)]` takes none of the prefix, and `#[forall(skip(String))]` keeps
+`#[tmsbi(skip)]` takes none of the prefix, and `#[tmsbi(skip(String))]` keeps
 out only the fragments it names, across every stacked `forall`.
 
 ## Read a struct as the product over its field names

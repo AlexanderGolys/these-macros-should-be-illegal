@@ -18,11 +18,14 @@ use syn::{
     token::Brace,
 };
 
-/// Name of the macro, which also names the markers it reads on members.
+/// Name of the macro, by which a stacked invocation is recognized among the item's attributes.
 const MACRO_NAME: &str = "forall";
 
+/// Namespace of the markers the macros of this crate read on members.
+const MARKER_NAMESPACE: &str = "tmsbi";
+
 mod keyword {
-    //! The word opening a member marker.
+    //! The word opening a member marker of `forall`.
 
     syn::custom_keyword!(skip);
 }
@@ -149,7 +152,7 @@ fn skipped_empty_fragment(input: ParseStream) -> bool {
         .is_ok()
 }
 
-/// The fragments of the prefix one member keeps out, read from its `#[forall(skip)]` markers.
+/// The fragments of the prefix one member keeps out, read from its `#[tmsbi(skip)]` markers.
 enum Exclusion {
     /// The member takes nothing from any prefix.
     Everything,
@@ -207,12 +210,12 @@ impl Exclusion {
     fn read(attributes: &mut Vec<Attribute>, markers: Markers) -> syn::Result<Self> {
         let exclusion = attributes
             .iter()
-            .filter(|attribute| names_forall(attribute.path()))
+            .filter(|attribute| is_marker(attribute))
             .try_fold(Self::default(), |exclusion, marker| {
                 Ok::<_, Error>(exclusion | marker.parse_args()?)
             })?;
         if let Markers::Removed = markers {
-            attributes.retain(|attribute| !names_forall(attribute.path()));
+            attributes.retain(|attribute| !is_marker(attribute));
         }
 
         Ok(exclusion)
@@ -276,6 +279,17 @@ fn names_forall(path: &Path) -> bool {
     path.segments
         .last()
         .is_some_and(|segment| segment.ident == MACRO_NAME)
+}
+
+/// Recognizes a marker of `forall`, leaving the other markers of the namespace to their macros.
+fn is_marker(attribute: &Attribute) -> bool {
+    attribute.path().is_ident(MARKER_NAMESPACE)
+        && attribute
+            .parse_args_with(|input: ParseStream| {
+                let opens_with_skip = input.peek(keyword::skip);
+                input.parse::<TokenStream>().map(|_| opens_with_skip)
+            })
+            .unwrap_or(false)
 }
 
 /// Compares two fragments by the tokens they are written with.
@@ -462,7 +476,7 @@ impl MemberPrefix {
                     position,
                     format!(
                         "field `{name}` is named from its tuple position, so it must take the shared type; \
-                         name the fragments to skip with `skip(...)`"
+                         name the fragments to skip with `#[tmsbi(skip(...))]`"
                     ),
                 ));
             }
@@ -1031,7 +1045,7 @@ mod tests {
     fn skips_every_fragment_for_a_marked_member() {
         let output = distributed(
             r#"#[doc = "shared"] pub"#,
-            "struct S { a: u8, #[forall(skip)] b: u8 }",
+            "struct S { a: u8, #[tmsbi(skip)] b: u8 }",
         );
 
         assert!(
@@ -1047,7 +1061,7 @@ mod tests {
     fn skips_the_named_fragments() {
         let output = distributed(
             r#"#[doc = "shared"] #[allow(dead_code)] pub"#,
-            "struct S { #[forall(skip(#[doc], pub))] a: u8 }",
+            "struct S { #[tmsbi(skip(#[doc], pub))] a: u8 }",
         );
 
         assert!(
@@ -1061,7 +1075,7 @@ mod tests {
     fn skips_an_attribute_by_its_arguments() {
         let output = distributed(
             r#"#[doc = "one"] #[doc = "two"]"#,
-            r#"enum E { #[forall(skip(#[doc = "one"]))] A }"#,
+            r#"enum E { #[tmsbi(skip(#[doc = "one"]))] A }"#,
         );
 
         assert!(output.contains(r#"{ # [doc = "two"] A }"#), "{output}");
@@ -1070,10 +1084,10 @@ mod tests {
     /// A variant skips some of the shared types, or the whole group of named fields.
     #[test]
     fn skips_shared_fields_of_a_variant() {
-        let types = distributed("u8, u16", "enum E { A, #[forall(skip(u8))] B }");
+        let types = distributed("u8, u16", "enum E { A, #[tmsbi(skip(u8))] B }");
         let group = distributed(
             "{ code: u16, path: String }",
-            "enum E { #[forall(skip({ path: String }))] A, #[forall(skip)] B = 1 }",
+            "enum E { #[tmsbi(skip({ path: String }))] A, #[tmsbi(skip)] B = 1 }",
         );
 
         assert!(types.contains("A (u8 , u16)"), "{types}");
@@ -1086,10 +1100,10 @@ mod tests {
     /// Markers stay for the `forall` below, which reads them too.
     #[test]
     fn keeps_the_markers_for_a_stacked_prefix() {
-        let output = distributed("pub", "#[forall(u8)] struct S(a, #[forall(skip(pub))] b);");
+        let output = distributed("pub", "#[forall(u8)] struct S(a, #[tmsbi(skip(pub))] b);");
 
         assert!(
-            output.contains("(pub a , # [forall (skip (pub))] b)"),
+            output.contains("(pub a , # [tmsbi (skip (pub))] b)"),
             "{output}"
         );
     }
@@ -1097,17 +1111,25 @@ mod tests {
     /// A field named from its tuple position cannot go without the shared type.
     #[test]
     fn rejects_skipping_the_type_of_a_named_position() {
-        let output = distributed("pub, u8", "struct S(a, #[forall(skip)] b);");
+        let output = distributed("pub, u8", "struct S(a, #[tmsbi(skip)] b);");
 
         assert!(output.contains("must take the shared type"), "{output}");
     }
 
-    /// A marker holds `skip` and nothing else.
+    /// A marker of the namespace opening with another word is left to its own macro.
     #[test]
-    fn rejects_a_marker_without_skip() {
-        let output = distributed("pub", "struct S { #[forall(pub)] a: u8 }");
+    fn keeps_other_markers_of_the_namespace() {
+        let output = distributed("pub", "struct S { #[tmsbi(other)] a: u8 }");
 
-        assert!(output.contains("expected `skip`"), "{output}");
+        assert!(output.contains("# [tmsbi (other)] pub a : u8"), "{output}");
+    }
+
+    /// A marker holding more than `skip` and its fragments is rejected.
+    #[test]
+    fn rejects_trailing_tokens_after_the_fragments() {
+        let output = distributed("pub", "struct S { #[tmsbi(skip(pub) extra)] a: u8 }");
+
+        assert!(output.contains("compile_error"), "{output}");
     }
 
     /// The shared named fields may borrow the lifetimes of the enum.

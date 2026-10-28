@@ -43,15 +43,15 @@ pub enum Stage {
 #[forall(#[doc = "One shared field."] pub)]
 pub struct Partial {
     width: u32,
-    #[forall(skip)]
+    #[tmsbi(skip)]
     height: u32,
-    #[forall(skip(pub))]
+    #[tmsbi(skip(pub))]
     depth: u32,
 }
 
 #[forall(u16, String)]
 pub enum Reply {
     Moved,
-    #[forall(skip(String))]
+    #[tmsbi(skip(String))]
     Empty,
 }

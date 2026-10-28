@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.12.2 - 2026-10-28
+
+### Changed
+
+- The `#[forall]` member marker is spelled `#[tmsbi(skip)]` and
+  `#[tmsbi(skip(fragments))]`, under the `tmsbi` namespace of this crate, in
+  place of `#[forall(skip)]`. `forall` leaves other `tmsbi` markers to their
+  own macros.
+
 ## 0.12.1 - 2026-10-28
 
 ### Added

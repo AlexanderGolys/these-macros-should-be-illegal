@@ -395,14 +395,16 @@ make_attr! {
     /// documents none, which keeps the generated braced struct usable under
     /// `#![deny(missing_docs)]`.
     ///
-    /// A member keeps out of the prefix with an inert `#[forall(skip)]` marker,
-    /// which skips every fragment, or `#[forall(skip(fragments))]`, whose
+    /// A member keeps out of the prefix with an inert `#[tmsbi(skip)]` marker,
+    /// which skips every fragment, or `#[tmsbi(skip(fragments))]`, whose
     /// fragments are written like a prefix and skip the identical distributed
     /// ones. An attribute written as a bare path, like `#[doc]`, skips every
     /// distributed attribute of that path, and a group of named fields skips the
     /// shared fields by their names. Each stacked `forall` reads the same markers
     /// and the last one removes them, so a fragment no prefix distributes is
     /// ignored. A field named from its tuple position cannot skip the shared type.
+    /// The marker lives under `tmsbi`, the namespace of this crate, and `forall`
+    /// claims only the `tmsbi` markers opening with `skip`.
     ///
     /// A prefix forwarded by a declarative macro is read like one written
     /// directly: `#[forall($(#[$attribute])* $visibility $shared)]` takes its
@@ -446,9 +448,9 @@ make_attr! {
     /// #[forall(u16, String)]
     /// enum Reply {
     ///     Moved,
-    ///     #[forall(skip(String))]
+    ///     #[tmsbi(skip(String))]
     ///     Empty,
-    ///     #[forall(skip)]
+    ///     #[tmsbi(skip)]
     ///     Unknown,
     /// }
     ///

@@ -499,7 +499,7 @@ pub struct Partial {
     /// Field taking the whole prefix.
     pub shared: u8,
     /// Field taking nothing from the prefix.
-    #[forall(skip)]
+    #[tmsbi(skip)]
     pub(crate) required: u8,
 }
 
@@ -510,10 +510,10 @@ pub enum Reply {
     /// Variant holding both shared types.
     Moved,
     /// Variant holding only the shared code.
-    #[forall(skip(String))]
+    #[tmsbi(skip(String))]
     Empty,
     /// Variant holding none of the shared fields.
-    #[forall(skip(u16, String))]
+    #[tmsbi(skip(u16, String))]
     Unknown,
 }
 
@@ -522,7 +522,7 @@ pub enum Reply {
 #[forall(#[doc = "Shared field."] u8)]
 pub struct Layered(
     first,
-    #[forall(skip(pub, #[doc]))]
+    #[tmsbi(skip(pub, #[doc]))]
     #[doc = "Own field."]
     second,
 );

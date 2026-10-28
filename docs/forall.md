@@ -118,7 +118,7 @@ with a discriminant, which cannot hold fields at all.
 
 ## Keeping a member out
 
-A member that should not take the prefix carries `#[forall(skip)]`. To keep
+A member that should not take the prefix carries `#[tmsbi(skip)]`. To keep
 out only some of it, list those fragments, written exactly as in the prefix:
 
 ```rust,pane="You write"
@@ -127,10 +127,10 @@ out only some of it, list those fragments, written exactly as in the prefix:
 #[derive(serde::Deserialize)]
 struct Config {
     retries: u8,
-    #[forall(skip(#[serde]))]
+    #[tmsbi(skip(#[serde]))]
     /// Must always be given.
     endpoint: String,
-    #[forall(skip)]
+    #[tmsbi(skip)]
     cache: Vec<u8>,
 }
 ```
@@ -157,9 +157,9 @@ for a variant that holds none of them:
 #[forall(u16, String)]
 enum Reply {
     Moved,
-    #[forall(skip(String))]
+    #[tmsbi(skip(String))]
     Empty,
-    #[forall(skip)]
+    #[tmsbi(skip)]
     Unknown,
 }
 ```
@@ -180,11 +180,15 @@ skips only the fragments it distributes:
 # #[macro_use] extern crate these_macros_should_be_illegal;
 #[forall(pub)]
 #[forall(u8)]
-struct Range(start, #[forall(skip(pub))] end);
+struct Range(start, #[tmsbi(skip(pub))] end);
 ```
 
 A field named from its tuple position must still take the shared type, so it
 can skip the other fragments but not the type itself.
+
+The marker lives under `tmsbi`, the namespace of this crate, so it does not
+collide with attributes of other crates. `forall` claims only the `tmsbi`
+markers opening with `skip` and leaves the rest alone.
 
 ## Generated documentation
 
@@ -240,7 +244,7 @@ Every rejection names the member it is about:
 - a prefix for an item without a single field or variant to repeat it on;
 - a type where a bare field name is expected, which is what a tuple position
   means once the prefix names the shared type;
-- a member marker holding anything but `skip` or `skip(fragments)`, or one
-  skipping the shared type of a field named from its tuple position;
+- a `#[tmsbi(skip(...))]` marker followed by anything after its fragments, or
+  one skipping the shared type of a field named from its tuple position;
 - an inner attribute, a second visibility, a second group of named fields, or a
   group naming no field at all.
