@@ -575,3 +575,66 @@ fn reads_a_marker_under_stacked_prefixes() {
 
     assert_eq!(value.first + layered::second(&value), 3);
 }
+
+/// A type constructor wraps every declared field type, except the skipped ones.
+mod lifted {
+    use these_macros_should_be_illegal::forall;
+
+    #[forall(Option<>)]
+    pub struct Patch {
+        pub name: String,
+        pub tags: Vec<String>,
+        #[tmsbi(skip(Option<>))]
+        pub id: u32,
+    }
+
+    #[forall(Box<>)]
+    pub enum Tree {
+        Leaf,
+        Node(u8, u8),
+        Named { value: u8 },
+    }
+
+    #[test]
+    fn lifts_struct_and_enum_field_types() {
+        let patch = Patch {
+            name: Some(String::new()),
+            tags: None,
+            id: 1,
+        };
+        let node = Tree::Node(Box::new(1), Box::new(2));
+        let named = Tree::Named { value: Box::new(3) };
+
+        assert!(patch.name.is_some() && patch.tags.is_none() && patch.id == 1);
+        assert!(matches!(node, Tree::Node(..)) && matches!(named, Tree::Named { .. }));
+        assert!(matches!(Tree::Leaf, Tree::Leaf));
+    }
+}
+
+/// A prefix is sugar for stacking its parts, and the stack runs from the top down.
+mod sugar {
+    use these_macros_should_be_illegal::forall;
+
+    #[forall(Box<>, Option<>)]
+    struct Sugared {
+        value: u8,
+    }
+
+    #[forall(Box<>)]
+    #[forall(Option<>)]
+    struct Stacked {
+        value: u8,
+    }
+
+    #[test]
+    fn lifts_a_prefix_like_the_stack_of_its_parts() {
+        let sugared = Sugared {
+            value: Some(Box::new(1)),
+        };
+        let stacked = Stacked {
+            value: Some(Box::new(1)),
+        };
+
+        assert_eq!(sugared.value, stacked.value);
+    }
+}

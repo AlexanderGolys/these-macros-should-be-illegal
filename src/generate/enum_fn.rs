@@ -1,4 +1,79 @@
 //! Local enum-syntax extension for methods generated as match expressions.
+//!
+//! The attribute reuses the discriminant position `Variant = ...` to hold the
+//! value one method returns for that variant. Every such right-hand side is
+//! removed from the enum and becomes one arm of a `match self` in an inherent
+//! method; variants without one fall through to the `missing` expression.
+//!
+//! ```rust,ignore
+//! #[enum_fn(pub const code -> u8, missing = 0)]
+//! enum Status {
+//!     Ready = 1,
+//!     Busy(u32) = 2,
+//!     Unknown,
+//! }
+//! assert_eq!(Status::Busy(7).code(), 2);
+//! assert_eq!(Status::Unknown.code(), 0);
+//! ```
+//!
+//! Expands to:
+//!
+//! ```rust,ignore
+//! enum Status {
+//!     Ready,
+//!     Busy(u32),
+//!     Unknown,
+//! }
+//! impl Status {
+//!     #[allow(missing_docs)]
+//!     pub const fn code(&self) -> u8 {
+//!         match self {
+//!             Self::Ready => 1,
+//!             Self::Busy(..) => 2,
+//!             #[allow(unreachable_patterns)]
+//!             _ => 0,
+//!         }
+//!     }
+//! }
+//! ```
+//!
+//! A lambda right-hand side receives borrows of the variant's fields, and the
+//! method gains a generated lifetime so the result may borrow from them:
+//!
+//! ```rust,ignore
+//! #[enum_fn(label -> Option<&str>, missing = None)]
+//! enum Message {
+//!     Fixed = Some("fixed"),
+//!     Text { body: String } = |body| Some(body.as_str()),
+//!     Empty,
+//! }
+//! let text = Message::Text { body: "hello".into() };
+//! assert_eq!(text.label(), Some("hello"));
+//! assert_eq!(Message::Empty.label(), None);
+//! ```
+//!
+//! Expands to:
+//!
+//! ```rust,ignore
+//! enum Message {
+//!     Fixed,
+//!     Text { body: String },
+//!     Empty,
+//! }
+//! impl Message {
+//!     #[allow(missing_docs)]
+//!     fn label<'__enum_fn_borrow>(&'__enum_fn_borrow self) -> Option<&'__enum_fn_borrow str> {
+//!         match self {
+//!             Self::Fixed => Some("fixed"),
+//!             Self::Text { body: __enum_fn_field_0 } => {
+//!                 (|body: &'__enum_fn_borrow String| Some(body.as_str()))(__enum_fn_field_0)
+//!             }
+//!             #[allow(unreachable_patterns)]
+//!             _ => None,
+//!         }
+//!     }
+//! }
+//! ```
 
 use proc_macro2::{Span, TokenStream};
 
@@ -14,7 +89,40 @@ use syn::{
     visit_mut::{self, VisitMut},
 };
 
-/// Parsed accessor name and requested output representation.
+/// Arguments of one `#[enum_fn(...)]` attribute: the generated method's
+/// signature followed by optional comma-separated options.
+///
+/// The signature is written as
+/// `#[attributes]* visibility? const? name -> ReturnType`, and the only option
+/// is `missing = expression`, the result for variants without a right-hand
+/// side. A single trailing comma is accepted.
+///
+/// ```rust,ignore
+/// // Private runtime method; the default `missing` panics.
+/// #[enum_fn(code -> u8)]
+/// enum Bit {
+///     Zero = 0,
+///     One = 1,
+/// }
+/// assert_eq!(Bit::One.code(), 1);
+///
+/// // Restricted visibility, `const`, an explicit fallback, and a trailing comma.
+/// #[enum_fn(pub(crate) const weight -> u8, missing = 0,)]
+/// enum Coin {
+///     Gold = 10,
+///     Copper,
+/// }
+/// const COPPER: u8 = Coin::Copper.weight();
+/// assert_eq!(COPPER, 0);
+///
+/// // Attributes before the signature apply to the generated method.
+/// #[enum_fn(#[doc = "Human-readable name."] #[inline] pub name -> Option<&str>, missing = None)]
+/// enum Planet {
+///     Earth = Some("Earth"),
+///     Unnamed,
+/// }
+/// assert_eq!(Planet::Unnamed.name(), None);
+/// ```
 struct Arguments {
     /// Attributes placed before the generated method signature.
     method_attributes: Vec<Attribute>,
@@ -26,13 +134,34 @@ struct Arguments {
     method_name: Ident,
     /// Exact return type declared for the generated method.
     return_type: Type,
-    /// Requested behavior for variants without an arm expression.
+    /// Expression of the wildcard arm reached by variants without a right-hand side.
     missing: Expr,
 }
 
 /// Parses the `enum_fn` attribute's arguments.
 impl Parse for Arguments {
-    /// Parses visibility, optional constness, method name, output type, and fallback.
+    /// Parses method attributes, visibility, optional constness, method name,
+    /// return type, and the options that follow.
+    ///
+    /// Any option other than `missing` is rejected:
+    ///
+    /// ```rust,ignore
+    /// // error: unknown option; expected `missing = expression`
+    /// #[enum_fn(code -> u8, fallback = 0)]
+    /// enum Bit {
+    ///     One = 1,
+    /// }
+    /// ```
+    ///
+    /// So is a second `missing`:
+    ///
+    /// ```rust,ignore
+    /// // error: duplicate `missing` option
+    /// #[enum_fn(code -> u8, missing = 1, missing = 2)]
+    /// enum Bit {
+    ///     One = 1,
+    /// }
+    /// ```
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let method_attributes = Attribute::parse_outer(input)?;
         let visibility = input.parse()?;
@@ -75,15 +204,47 @@ impl Parse for Arguments {
     }
 }
 
-/// Operation performed by the generated match arm for one variant.
+/// Right-hand side written after `=` on one variant, which decides what its
+/// match arm evaluates.
+///
+/// An expression ignores the variant's fields; a lambda receives a borrow of
+/// each of them.
+///
+/// ```rust,ignore
+/// #[enum_fn(area -> u32)]
+/// enum Shape {
+///     // Expression: the arm is `Self::Dot => 0`.
+///     Dot = 0,
+///     // Expression: the arm is `Self::Line(..) => 0`.
+///     Line(u32) = 0,
+///     // Call: the lambda receives `&u32, &u32`.
+///     Rectangle(u32, u32) = |width, height| width * height,
+///     // Call: the lambda receives `&u32`.
+///     Square { side: u32 } = |side| side * side,
+/// }
+/// assert_eq!(Shape::Line(5).area(), 0);
+/// assert_eq!(Shape::Rectangle(2, 3).area(), 6);
+/// assert_eq!(Shape::Square { side: 4 }.area(), 16);
+/// ```
 enum VariantOutput {
-    /// Evaluate an ordinary Rust expression.
+    /// Evaluate an ordinary Rust expression that ignores the variant's fields.
     Expression(Box<Expr>),
-    /// Invoke a closure with every field.
+    /// Invoke a closure with a borrow of every field, in declaration order.
     Call(Box<ExprClosure>),
 }
 
 /// Generates an enum method whose body is a match over its variants.
+///
+/// Parse failures of either the arguments or the item are returned as a
+/// `compile_error!` invocation instead of the expansion, so the attribute
+/// rejects anything but an enum:
+///
+/// ```rust,ignore
+/// // error: expected `enum`
+/// #[enum_fn(code -> u8)]
+/// struct Status(u8);
+/// ```
+#[must_use]
 pub fn enum_fn(arguments: TokenStream, item: TokenStream) -> TokenStream {
     let result = parse2::<Arguments>(arguments)
         .and_then(|arguments| parse2::<ItemEnum>(item).map(|item| (arguments, item)))
@@ -93,6 +254,45 @@ pub fn enum_fn(arguments: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 /// Removes method-arm expressions and emits the accessor implementation.
+///
+/// Only the enum's conditional attributes are copied onto the `impl`, so the
+/// method disappears together with an excluded enum. A lambda anywhere in the
+/// enum switches the whole method to an explicit receiver lifetime.
+///
+/// ```rust,ignore
+/// #[enum_fn(code -> u8)]
+/// #[cfg(unix)]
+/// #[derive(Debug)]
+/// enum Status {
+///     Ready = 1,
+///     Busy(u32) = |load| *load as u8,
+/// }
+/// ```
+///
+/// Expands to:
+///
+/// ```rust,ignore
+/// #[cfg(unix)]
+/// #[derive(Debug)]
+/// enum Status {
+///     Ready,
+///     Busy(u32),
+/// }
+/// #[cfg(unix)]
+/// impl Status {
+///     #[allow(missing_docs)]
+///     fn code<'__enum_fn_borrow>(&'__enum_fn_borrow self) -> u8 {
+///         match self {
+///             Self::Ready => 1,
+///             Self::Busy(__enum_fn_field_0) => {
+///                 (|load: &'__enum_fn_borrow u32| *load as u8)(__enum_fn_field_0)
+///             }
+///             #[allow(unreachable_patterns)]
+///             _ => ::core::panic!(),
+///         }
+///     }
+/// }
+/// ```
 fn expand(arguments: Arguments, mut item: ItemEnum) -> syn::Result<TokenStream> {
     let Arguments {
         method_attributes,
@@ -184,6 +384,41 @@ fn expand(arguments: Arguments, mut item: ItemEnum) -> syn::Result<TokenStream> 
 }
 
 /// Checks that a mapping lambda describes exactly the variant's product.
+///
+/// The lambda takes one parameter per field. Tuple fields may be bound under
+/// any pattern, while named fields must be bound by their own names in
+/// declaration order, optionally with a type annotation. Accepted lambdas are
+/// shown on [`closure_arm`]; each of the following is rejected.
+///
+/// A tuple variant needs one parameter per field:
+///
+/// ```rust,ignore
+/// // error: expected 2 lambda argument(s), one per variant field; found 1
+/// #[enum_fn(sum -> u8)]
+/// enum Value {
+///     Pair(u8, u8) = |pair| pair.0,
+/// }
+/// ```
+///
+/// A named field cannot be renamed:
+///
+/// ```rust,ignore
+/// // error: expected lambda argument `code` matching the named field in declaration order
+/// #[enum_fn(code -> u8)]
+/// enum Value {
+///     Named { code: u8 } = |c| *c,
+/// }
+/// ```
+///
+/// Named fields are bound in declaration order:
+///
+/// ```rust,ignore
+/// // error: expected lambda argument `x` matching the named field in declaration order
+/// #[enum_fn(first -> u8)]
+/// enum Value {
+///     Point { x: u8, y: u8 } = |y, x| *x,
+/// }
+/// ```
 fn validate_closure(fields: &Fields, closure: &ExprClosure) -> syn::Result<()> {
     if closure.inputs.len() != fields.len() {
         return Err(Error::new_spanned(
@@ -217,6 +452,42 @@ fn validate_closure(fields: &Fields, closure: &ExprClosure) -> syn::Result<()> {
 }
 
 /// Builds one match arm from its variant and selected operation.
+///
+/// The variant's conditional attributes guard the arm, so an arm never refers
+/// to a variant that was compiled out.
+///
+/// ```rust,ignore
+/// #[enum_fn(code -> u8)]
+/// enum Status {
+///     Ready = 1,
+///     #[cfg(test)]
+///     Mock = 0,
+/// }
+/// assert_eq!(Status::Ready.code(), 1);
+/// ```
+///
+/// Expands to:
+///
+/// ```rust,ignore
+/// enum Status {
+///     Ready,
+///     #[cfg(test)]
+///     Mock,
+/// }
+/// impl Status {
+///     #[allow(missing_docs)]
+///     fn code(&self) -> u8 {
+///         match self {
+///             Self::Ready => 1,
+///             #[cfg(test)]
+///             Self::Mock => 0,
+///             #[allow(unreachable_patterns)]
+///             _ => ::core::panic!(),
+///         }
+///     }
+/// }
+/// assert_eq!(Status::Ready.code(), 1);
+/// ```
 fn accessor_arm(
     variant: &Variant,
     output: &VariantOutput,
@@ -239,6 +510,51 @@ fn accessor_arm(
 }
 
 /// Lowers a mapping closure with hygienic bindings for every variant field.
+///
+/// Returns the arm's pattern and the immediately invoked closure separately.
+/// The bindings use mixed-site hygiene, so they never capture or shadow names
+/// used inside the closure body.
+///
+/// ```rust,ignore
+/// #[enum_fn(size -> usize)]
+/// enum Item {
+///     Pair(u8, u8) = |x, y| usize::from(*x + *y),
+///     Text { body: String } = |body| body.len(),
+///     Unit = || 1,
+/// }
+/// assert_eq!(Item::Pair(1, 2).size(), 3);
+/// assert_eq!(Item::Text { body: "four".into() }.size(), 4);
+/// assert_eq!(Item::Unit.size(), 1);
+/// ```
+///
+/// Expands to:
+///
+/// ```rust,ignore
+/// enum Item {
+///     Pair(u8, u8),
+///     Text { body: String },
+///     Unit,
+/// }
+/// impl Item {
+///     #[allow(missing_docs)]
+///     fn size<'__enum_fn_borrow>(&'__enum_fn_borrow self) -> usize {
+///         match self {
+///             Self::Pair(__enum_fn_field_0, __enum_fn_field_1) => {
+///                 (|x: &'__enum_fn_borrow u8, y: &'__enum_fn_borrow u8| usize::from(*x + *y))(
+///                     __enum_fn_field_0,
+///                     __enum_fn_field_1,
+///                 )
+///             }
+///             Self::Text { body: __enum_fn_field_0 } => {
+///                 (|body: &'__enum_fn_borrow String| body.len())(__enum_fn_field_0)
+///             }
+///             Self::Unit => (|| 1)(),
+///             #[allow(unreachable_patterns)]
+///             _ => ::core::panic!(),
+///         }
+///     }
+/// }
+/// ```
 fn closure_arm(
     variant: &Ident,
     fields: &Fields,
@@ -268,6 +584,18 @@ fn closure_arm(
 }
 
 /// Supplies field-reference types for closure inputs that the user left untyped.
+///
+/// Inputs that already carry a type annotation are kept as written, so
+/// `|count, name: &String|` on a `Tagged(u8, String)` variant becomes
+/// `|count: &'__enum_fn_borrow u8, name: &String|`.
+///
+/// ```rust,ignore
+/// #[enum_fn(describe -> String)]
+/// enum Entry {
+///     Tagged(u8, String) = |count, name: &String| format!("{name} x{count}"),
+/// }
+/// assert_eq!(Entry::Tagged(2, "apple".into()).describe(), "apple x2");
+/// ```
 fn typed_closure(fields: &Fields, closure: &ExprClosure, borrow: &Lifetime) -> ExprClosure {
     let mut closure = closure.clone();
     for (input, field) in closure.inputs.iter_mut().zip(fields) {
@@ -284,6 +612,21 @@ fn typed_closure(fields: &Fields, closure: &ExprClosure, borrow: &Lifetime) -> E
 }
 
 /// Builds a non-binding match pattern for a variant.
+///
+/// - `Ready` becomes `Self::Ready`.
+/// - `Busy(u32)` becomes `Self::Busy(..)`.
+/// - `Text { body: String }` becomes `Self::Text { .. }`.
+///
+/// ```rust,ignore
+/// #[enum_fn(kind -> &str)]
+/// enum Event {
+///     Ready = "ready",
+///     Busy(u32) = "busy",
+///     Text { body: String } = "text",
+/// }
+/// assert_eq!(Event::Busy(3).kind(), "busy");
+/// assert_eq!(Event::Text { body: String::new() }.kind(), "text");
+/// ```
 fn variant_pattern(ident: &Ident, fields: &Fields) -> TokenStream {
     match fields {
         Fields::Unit => quote!(Self::#ident),
@@ -293,12 +636,38 @@ fn variant_pattern(ident: &Ident, fields: &Fields) -> TokenStream {
 }
 
 /// Names elided return-reference lifetimes consistently with the receiver.
+///
+/// Elided and `'_` references receive the generated borrow lifetime, while
+/// named lifetimes and references inside function-pointer or `Fn(...)`
+/// signatures, which have their own elision scope, are left untouched:
+///
+/// - `&str` becomes `&'__enum_fn_borrow str`.
+/// - `Option<&'_ [u8]>` becomes `Option<&'__enum_fn_borrow [u8]>`.
+/// - `&'static str`, `fn(&str) -> &str` and `Box<dyn Fn(&u8) -> &u8>` stay as written.
+///
+/// ```rust,ignore
+/// #[enum_fn(bytes -> Option<&'_ [u8]>, missing = None)]
+/// enum Payload {
+///     Raw(Vec<u8>) = |data| Some(data.as_slice()),
+///     Empty,
+/// }
+/// assert_eq!(Payload::Raw(vec![1, 2]).bytes(), Some(&[1, 2][..]));
+///
+/// #[enum_fn(trim -> fn(&str) -> &str)]
+/// enum Trim {
+///     Start(bool) = |_| str::trim_start,
+///     End = str::trim_end,
+/// }
+/// assert_eq!((Trim::End.trim())("  x  "), "  x");
+/// ```
 struct BorrowedReturn<'a> {
     /// Lifetime of the generated shared receiver.
     borrow: &'a Lifetime,
 }
 
+/// Rewrites reference lifetimes while skipping nested elision scopes.
 impl VisitMut for BorrowedReturn<'_> {
+    /// Names an elided or `'_` reference lifetime, then visits the referent.
     fn visit_type_reference_mut(&mut self, reference: &mut syn::TypeReference) {
         if reference.lifetime.is_none()
             || reference
@@ -311,8 +680,10 @@ impl VisitMut for BorrowedReturn<'_> {
         visit_mut::visit_type_reference_mut(self, reference);
     }
 
+    /// Leaves `fn(&T) -> &U` alone, since its references elide among themselves.
     fn visit_type_fn_ptr_mut(&mut self, _: &mut syn::TypeFnPtr) {}
 
+    /// Leaves `Fn(&T) -> &U` alone, since its references elide among themselves.
     fn visit_parenthesized_generic_arguments_mut(
         &mut self,
         _: &mut syn::ParenthesizedGenericArguments,
@@ -321,6 +692,21 @@ impl VisitMut for BorrowedReturn<'_> {
 }
 
 /// Retains only conditional compilation, including nested `cfg_attr` conditions.
+///
+/// - `#[cfg(test)] #[derive(Debug)] #[doc = "..."]` keeps `#[cfg(test)]`.
+/// - `#[cfg_attr(unix, cfg(test), derive(Debug))] #[repr(u8)]` keeps
+///   `#[cfg_attr(unix, cfg(test))]`.
+///
+/// ```rust,ignore
+/// #[enum_fn(code -> u8, missing = 0)]
+/// enum Flag {
+///     #[cfg_attr(unix, doc = "Documented only on Unix.")]
+///     Shown = 1,
+///     #[cfg_attr(not(test), cfg(test))]
+///     Hidden = 2,
+/// }
+/// assert_eq!(Flag::Shown.code(), 1);
+/// ```
 fn conditional_attrs(attrs: &[Attribute]) -> Vec<Attribute> {
     attrs
         .iter()
@@ -332,6 +718,24 @@ fn conditional_attrs(attrs: &[Attribute]) -> Vec<Attribute> {
 }
 
 /// Removes variant-only metadata from a conditional attribute before forwarding it.
+///
+/// Returns `None` when nothing conditional remains to forward:
+///
+/// - `cfg(test)` stays `cfg(test)`.
+/// - `cfg_attr(unix, derive(Debug), cfg(test))` becomes `cfg_attr(unix, cfg(test))`.
+/// - `cfg_attr(unix, cfg_attr(test, cfg(debug_assertions)), doc = "...")` becomes
+///   `cfg_attr(unix, cfg_attr(test, cfg(debug_assertions)))`.
+/// - `cfg_attr(unix, derive(Debug))` and `derive(Debug)` are dropped.
+///
+/// ```rust,ignore
+/// #[enum_fn(code -> u8, missing = 0)]
+/// enum Mode {
+///     #[cfg_attr(unix, cfg_attr(not(test), cfg(test)), doc = "Unix-only docs.")]
+///     Debug = 1,
+///     Release = 2,
+/// }
+/// assert_eq!(Mode::Release.code(), 2);
+/// ```
 fn conditional_meta(meta: &Meta) -> Option<Meta> {
     if meta.path().is_ident("cfg") {
         return Some(meta.clone());

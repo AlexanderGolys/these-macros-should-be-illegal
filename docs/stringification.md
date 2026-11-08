@@ -13,7 +13,7 @@ Each case option accepts exactly one non-empty identifier or string literal.
 Keywords and raw identifiers are accepted as names; the raw `r#` marker is not
 part of the result.
 
-```rust
+```rust,pane="Macro"
 # #[macro_use] extern crate these_macros_should_be_illegal;
 const CAMEL: &str = stringify_as!(camel; some_HTTP_server);
 const PASCAL: &str = stringify_as!(pascal; some_HTTP_server);
@@ -23,13 +23,23 @@ const SHOUTING: &str = stringify_as!(screaming_snake; SomeHTTPServer);
 const LOWER: &str = stringify_as!(lower; Some_HTTP_Server);
 const UPPER: &str = stringify_as!(upper; Some_HTTP_Server);
 
-assert_eq!(CAMEL, "someHttpServer");
-assert_eq!(PASCAL, "SomeHttpServer");
-assert_eq!(SNAKE, "some_http_server");
-assert_eq!(KEBAB, "some-http-server");
-assert_eq!(SHOUTING, "SOME_HTTP_SERVER");
-assert_eq!(LOWER, "some_http_server");
-assert_eq!(UPPER, "SOME_HTTP_SERVER");
+# assert_eq!(CAMEL, "someHttpServer");
+# assert_eq!(PASCAL, "SomeHttpServer");
+# assert_eq!(SNAKE, "some_http_server");
+# assert_eq!(KEBAB, "some-http-server");
+# assert_eq!(SHOUTING, "SOME_HTTP_SERVER");
+# assert_eq!(LOWER, "some_http_server");
+# assert_eq!(UPPER, "SOME_HTTP_SERVER");
+```
+
+```rust,ignore,pane="Expansion"
+const CAMEL: &str = "someHttpServer";
+const PASCAL: &str = "SomeHttpServer";
+const SNAKE: &str = "some_http_server";
+const KEBAB: &str = "some-http-server";
+const SHOUTING: &str = "SOME_HTTP_SERVER";
+const LOWER: &str = "some_http_server";
+const UPPER: &str = "SOME_HTTP_SERVER";
 ```
 
 The supported conversions are:

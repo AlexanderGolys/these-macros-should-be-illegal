@@ -25,9 +25,12 @@ assert_eq!(reflected, 8);
 
 It performs only the structural reflection
 
-```rust,ignore
+```rust,ignore,pane="Before reflection"
 first! { second! { body } }
-    ↦ second! { first! { body } }
+```
+
+```rust,ignore,pane="After reflection"
+second! { first! { body } }
 ```
 
 so the example becomes `double! { add_one! { 3 } }`. The inner body is never
@@ -46,9 +49,12 @@ where `invoke` pairs one macro path with one opaque token stream.
 
 Outer attributes may precede either path and move together with that invocation:
 
-```rust,ignore
+```rust,ignore,pane="Macro"
 reflect!(#[a] first, #[b] second; body)
-    -> #[b] second! { #[a] first! { body } }
+```
+
+```rust,ignore,pane="Expansion"
+#[b] second! { #[a] first! { body } }
 ```
 
 Whether a particular attribute is valid still depends on the Rust context in
@@ -63,9 +69,12 @@ to the `reflect!` call, not either operand.
 `perm!` uses ordinary one-based cycle notation. Separate positions with spaces:
 `14` is one integer token, whereas `1 4` denotes two positions.
 
-```rust,ignore
+```rust,ignore,pane="Macro"
 perm! { ((1 4 3)), a, b, c, d, e }
-    -> c, b, d, a, e
+```
+
+```rust,ignore,pane="Expansion"
+c, b, d, a, e
 ```
 
 Cycles compose from right to left. The permutation acts by moving the token tree

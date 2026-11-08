@@ -5,9 +5,9 @@ use std::ops::BitOr;
 use proc_macro2::TokenStream;
 use quote::{ToTokens, quote};
 use syn::{
-    Attribute, Data, DeriveInput, Error, Field, Fields, FieldsNamed, FieldsUnnamed, Ident, LitStr,
-    Meta, Path, Token, Type, Variant, Visibility, parenthesized, parse_quote, parse2,
-    punctuated::Punctuated,
+    Attribute, Data, DeriveInput, Error, Field, Fields, FieldsNamed, FieldsUnnamed,
+    GenericArgument, Ident, LitStr, Meta, Path, PathArguments, Token, Type, TypePath, Variant,
+    Visibility, parenthesized, parse_quote, parse2, punctuated::Punctuated,
 };
 
 use crate::helpers::ungroup;
@@ -38,6 +38,14 @@ struct MemberPrefix {
     visibility: Option<Visibility>,
     /// Fields every member is given beside the ones it declares.
     shared: SharedFields,
+    /// Type constructors written as `F<>`, in the order they are written.
+    ///
+    /// `forall(a, b)` applies `a` and then `b`, so a constructor lifts every declared field and
+    /// every shared field written before it, and the one written last ends up outermost.
+    lifts: Vec<TypePath>,
+    /// For each shared type, or for the one group of shared named fields, how many of the
+    /// constructors are written before it, which are the ones that do not lift it.
+    lifts_before_shared: Vec<usize>,
 }
 
 /// The fields the prefix gives to every member of the annotated item.
@@ -61,6 +69,8 @@ impl Parse for MemberPrefix {
             attributes: Vec::new(),
             visibility: None,
             shared: SharedFields::Declared,
+            lifts: Vec::new(),
+            lifts_before_shared: Vec::new(),
         };
         while !input.is_empty() {
             prefix.parse_part(input)?;
@@ -68,10 +78,11 @@ impl Parse for MemberPrefix {
         }
         if prefix.attributes.is_empty()
             && prefix.visibility.is_none()
+            && prefix.lifts.is_empty()
             && matches!(prefix.shared, SharedFields::Declared)
         {
             return Err(input.error(
-                "expected an attribute, a visibility, a type or a group of named fields to distribute",
+                "expected an attribute, a visibility, a type, a type constructor `F<>` or a group of named fields to distribute",
             ));
         }
 
@@ -123,15 +134,23 @@ impl MemberPrefix {
                 SharedFields::Unnamed(_) => {
                     return Err(Error::new_spanned(group, MIXED_SHARED_FIELDS));
                 }
-                SharedFields::Declared => self.shared = SharedFields::Named(group),
+                SharedFields::Declared => {
+                    self.lifts_before_shared.push(self.lifts.len());
+                    self.shared = SharedFields::Named(group);
+                }
             }
             return Ok(());
         }
 
         let shared = input.parse::<Type>()?;
+        if let Some(constructor) = lifting_constructor(&shared) {
+            self.lifts.push(constructor.clone());
+            return Ok(());
+        }
         if let SharedFields::Named(_) = &self.shared {
             return Err(Error::new_spanned(shared, MIXED_SHARED_FIELDS));
         }
+        self.lifts_before_shared.push(self.lifts.len());
         if let SharedFields::Unnamed(types) = &mut self.shared {
             types.push(shared);
             return Ok(());
@@ -139,6 +158,17 @@ impl MemberPrefix {
         self.shared = SharedFields::Unnamed(vec![shared]);
 
         Ok(())
+    }
+}
+
+/// Recognizes a type constructor awaiting its argument, written with empty generics as `F<>`.
+fn lifting_constructor(written: &Type) -> Option<&TypePath> {
+    let Type::Path(path) = ungroup::ty(written) else {
+        return None;
+    };
+    match &path.path.segments.last()?.arguments {
+        PathArguments::AngleBracketed(generics) if generics.args.is_empty() => Some(path),
+        _ => None,
     }
 }
 
@@ -249,6 +279,16 @@ impl Exclusion {
                 .visibility
                 .as_ref()
                 .is_some_and(|written| same_tokens(written, visibility))
+        })
+    }
+
+    /// Keeps the lifting unless a marker repeats its type constructor.
+    fn keeps_lift(&self, constructor: &TypePath) -> bool {
+        self.keeps(|skipped| {
+            skipped
+                .lifts
+                .iter()
+                .any(|written| same_tokens(written, constructor))
         })
     }
 
@@ -397,9 +437,31 @@ impl MemberPrefix {
     /// Adds the shared attributes to one field and fills in its implicit visibility.
     fn apply(&self, field: &mut Field, markers: Markers) -> syn::Result<()> {
         let exclusion = Exclusion::read(&mut field.attrs, markers)?;
+        self.lift_declared(field, &exclusion);
         self.apply_except(field, &exclusion);
 
         Ok(())
+    }
+
+    /// Wraps a type in the constructors from the `first`-th on that the member does not exclude.
+    fn lifted(&self, written: &Type, first: usize, exclusion: &Exclusion) -> Type {
+        self.lifts[first..]
+            .iter()
+            .filter(|constructor| exclusion.keeps_lift(constructor))
+            .fold(written.clone(), |inner, constructor| {
+                let mut lifted = constructor.clone();
+                if let Some(segment) = lifted.path.segments.last_mut()
+                    && let PathArguments::AngleBracketed(generics) = &mut segment.arguments
+                {
+                    generics.args.push(GenericArgument::Type(inner));
+                }
+                Type::Path(lifted)
+            })
+    }
+
+    /// Lifts the type a field declares with every constructor the field does not exclude.
+    fn lift_declared(&self, field: &mut Field, exclusion: &Exclusion) {
+        field.ty = self.lifted(&field.ty, 0, exclusion);
     }
 
     /// Adds the shared attributes and visibility the field does not exclude.
@@ -417,12 +479,29 @@ impl MemberPrefix {
     fn extend(&self, variant: &mut Variant, owner: &Ident, markers: Markers) -> syn::Result<()> {
         let exclusion = Exclusion::read(&mut variant.attrs, markers)?;
         variant.attrs = self.inherited_by(std::mem::take(&mut variant.attrs), &exclusion);
+        for field in &mut variant.fields {
+            self.lift_declared(field, &exclusion);
+        }
+        self.add_shared_fields(variant, owner, &exclusion)?;
+
+        Ok(())
+    }
+
+    /// Gives one variant the shared types or named fields it does not exclude.
+    fn add_shared_fields(
+        &self,
+        variant: &mut Variant,
+        owner: &Ident,
+        exclusion: &Exclusion,
+    ) -> syn::Result<()> {
         match &self.shared {
             SharedFields::Declared => Ok(()),
             SharedFields::Unnamed(types) => {
                 let kept = types
                     .iter()
-                    .filter(|shared| exclusion.keeps_type(shared))
+                    .zip(&self.lifts_before_shared)
+                    .filter(|(shared, _)| exclusion.keeps_type(shared))
+                    .map(|(shared, &count)| self.lifted(shared, count, exclusion))
                     .collect::<Vec<_>>();
                 if kept.is_empty() {
                     return Ok(());
@@ -436,6 +515,10 @@ impl MemberPrefix {
                     .iter()
                     .filter(|shared| exclusion.keeps_field(shared))
                     .cloned()
+                    .map(|mut shared| {
+                        shared.ty = self.lifted(&shared.ty, self.lifts_before_shared[0], exclusion);
+                        shared
+                    })
                     .collect::<Vec<_>>();
                 if kept.is_empty() {
                     return Ok(());
@@ -465,6 +548,7 @@ impl MemberPrefix {
         markers: Markers,
     ) -> syn::Result<FieldsNamed> {
         let mut named = Punctuated::<Field, Token![,]>::new();
+        let lifts_shared = self.lifts_before_shared[0];
         for position in &names.unnamed {
             let name = field_name(position)?;
             let mut field: Field = parse_quote!(#name: #shared);
@@ -480,6 +564,19 @@ impl MemberPrefix {
                     ),
                 ));
             }
+            if let Some(constructor) = self.lifts[..lifts_shared]
+                .iter()
+                .find(|constructor| exclusion.keeps_lift(constructor))
+            {
+                return Err(Error::new_spanned(
+                    constructor,
+                    format!(
+                        "this constructor is written before the shared type, so it would lift the bare name `{name}`; \
+                         write it after the type"
+                    ),
+                ));
+            }
+            field.ty = self.lifted(shared, lifts_shared, &exclusion);
             self.apply_except(&mut field, &exclusion);
             document_created_field(&mut field, &owner.to_string(), &name);
             named.push(field);
@@ -490,7 +587,7 @@ impl MemberPrefix {
 }
 
 /// Appends one unnamed field per shared type to the fields of one variant.
-fn append_types(variant: &mut Variant, types: &[&Type]) -> syn::Result<()> {
+fn append_types(variant: &mut Variant, types: &[Type]) -> syn::Result<()> {
     match &mut variant.fields {
         Fields::Unnamed(fields) => {
             fields.unnamed.extend(
@@ -1030,6 +1127,96 @@ mod tests {
 
         assert!(output.contains(r#"# [doc = "d"] A = 1"#), "{output}");
         assert!(output.contains(r#"# [doc = "d"] B = 2"#), "{output}");
+    }
+
+    /// A type constructor with empty generics wraps the type of every declared field.
+    #[test]
+    fn lifts_declared_field_types() {
+        let braced = distributed("Option<>", "struct S { a: u8, b: Vec<u8> }");
+        let tuple = distributed("std::boxed::Box<>", "enum E { A, B(i8, u8), C { x: u8 } }");
+
+        assert!(braced.contains("a : Option < u8 >"), "{braced}");
+        assert!(braced.contains("b : Option < Vec < u8 > >"), "{braced}");
+        assert!(
+            tuple.contains("B (std :: boxed :: Box < i8 > , std :: boxed :: Box < u8 >)"),
+            "{tuple}"
+        );
+        assert!(tuple.contains("x : std :: boxed :: Box < u8 >"), "{tuple}");
+    }
+
+    /// A constructor reaches the shared fields written before it, not the ones after.
+    #[test]
+    fn lifts_shared_fields_after_adding_them() {
+        let types = distributed("u16, Option<>", "enum E { A(u8) }");
+        let group = distributed("{ code: u16 }, Option<>", "enum E { A }");
+        let unlifted = distributed("Option<>, u16", "enum E { A(u8) }");
+
+        assert!(
+            types.contains("A (Option < u8 > , Option < u16 >)"),
+            "{types}"
+        );
+        assert!(unlifted.contains("A (Option < u8 > , u16)"), "{unlifted}");
+        assert!(group.contains("code : Option < u16 >"), "{group}");
+    }
+
+    /// A field named from its tuple position holds the lifted shared type.
+    #[test]
+    fn lifts_the_shared_type_of_named_positions() {
+        let output = distributed("u8, Option<>", "struct S(a);");
+
+        assert!(output.contains("a : Option < u8 >"), "{output}");
+    }
+
+    /// A member keeps its own type when it skips the type constructor.
+    #[test]
+    fn skips_the_lifting() {
+        let output = distributed(
+            "Option<>",
+            "struct S { a: u8, #[tmsbi(skip(Option<>))] b: u8, #[tmsbi(skip)] c: u8 }",
+        );
+
+        assert!(output.contains("a : Option < u8 >"), "{output}");
+        assert!(output.contains("b : u8"), "{output}");
+        assert!(output.contains("c : u8"), "{output}");
+    }
+
+    /// `forall(a, b)` applies `a` and then `b`, so the last constructor ends up outermost.
+    #[test]
+    fn nests_constructors_last_outermost() {
+        let output = distributed("Box<>, Option<>", "struct S { a: u8 }");
+
+        assert!(output.contains("a : Option < Box < u8 > >"), "{output}");
+    }
+
+    /// A constructor lifts what is written before it and leaves what is written after it.
+    #[test]
+    fn lifts_only_the_shared_fields_written_before_it() {
+        let output = distributed("u8, Option<>, u16, Box<>, u32", "enum E { A(i8) }");
+
+        assert!(
+            output
+                .contains("A (Box < Option < i8 > > , Box < Option < u8 > > , Box < u16 > , u32)"),
+            "{output}"
+        );
+    }
+
+    /// Skipping one constructor leaves the others in place.
+    #[test]
+    fn skips_one_of_several_constructors() {
+        let output = distributed(
+            "Box<>, Option<>",
+            "struct S { #[tmsbi(skip(Option<>))] a: u8 }",
+        );
+
+        assert!(output.contains("a : Box < u8 >"), "{output}");
+    }
+
+    /// A constructor written before the shared type of tuple positions would lift the bare name.
+    #[test]
+    fn rejects_a_constructor_before_the_type_of_named_positions() {
+        let output = distributed("Option<>, u8", "struct S(a);");
+
+        assert!(output.contains("lift the bare name `a`"), "{output}");
     }
 
     /// A lifetime stands for no part of a member declaration.

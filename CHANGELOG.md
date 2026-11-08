@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.13.0 - 2026-11-08
+
+### Added
+
+- `#[forall(F<>)]` lifts a type constructor over the fields: a type written with
+  empty generics wraps the type of every declared field, so `T` becomes `F<T>`,
+  in structs, unions and every kind of enum variant. The parts of a prefix are
+  applied left to right, as the same parts stacked in separate `forall`s would
+  be, so a constructor also lifts the shared types and named fields written
+  before it, and several constructors nest with the last one outermost. A
+  constructor written before the shared type of a tuple struct is rejected,
+  since it would lift a bare field name. `#[tmsbi(skip(F<>))]` keeps one
+  member out of one constructor.
+
+### Documentation
+
+- The `forall` chapter explains why a prefix reads left to right, and how that
+  relates to the order of attributes across a stack and inside one prefix.
+- `enum_fn` documentation and the book's macro examples are expanded.
+
 ## 0.12.2 - 2026-10-28
 
 ### Changed

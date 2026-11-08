@@ -123,6 +123,10 @@ A member keeps the visibility it declares itself, and a created named field is
 documented unless the declaration documents it. A member marked
 `#[tmsbi(skip)]` takes none of the prefix, and `#[tmsbi(skip(String))]` keeps
 out only the fragments it names, across every stacked `forall`.
+A type written with empty generics, such as `#[forall(Option<>)]`, is a type
+constructor that wraps the type of every field in it, and it lifts what stands
+before it in the prefix; the parts are applied left to right, as stacked
+`forall`s would be.
 
 ## Read a struct as the product over its field names
 
