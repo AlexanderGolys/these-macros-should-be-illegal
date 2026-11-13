@@ -73,143 +73,104 @@ use crate::qol::*;
 use crate::sand::*;
 use proc_macro::TokenStream;
 
-macro_rules! make_attr {
-    ($(#[$attribute:meta])* $name:ident => $implementation:path) => {
-        $(#[$attribute])*
-        #[proc_macro_attribute]
-        pub fn $name(arguments: TokenStream, item: TokenStream) -> TokenStream {
-            $implementation(arguments.into(), item.into()).into()
-        }
-    };
-        ($(#[$attribute:meta])* $name:ident) => {
-        $(#[$attribute])*
-        #[proc_macro_attribute]
-        pub fn $name(arguments: TokenStream, item: TokenStream) -> TokenStream {
-            $name::$name(arguments.into(), item.into()).into()
-        }
-    };
+/// Gives one trait method a structural alias that [`make_fn!`](macro@make_fn) calls through.
+///
+/// No shared callable trait is imposed: the attribute only marks which method of
+/// a user-owned trait the generated same-name macro forwards its arguments to.
+///
+/// # Arguments
+///
+/// Write `#[callable(method)]` directly on a trait.
+///
+/// | Argument | Accepted value | Default |
+/// | --- | --- | --- |
+/// | `method` | Name of an existing trait method, including a raw identifier | Required |
+///
+/// One trailing comma is accepted. The selected method must exist; the
+/// structural-call method name reserved by this macro must remain unused.
+///
+/// # Examples
+///
+/// ```
+/// use these_macros_should_be_illegal::{callable, make_fn};
+///
+/// #[callable(apply)]
+/// trait Action {
+///     fn apply(&self, point: usize) -> usize;
+/// }
+///
+/// struct Shift(usize);
+///
+/// impl Action for Shift {
+///     fn apply(&self, point: usize) -> usize {
+///         point + self.0
+///     }
+/// }
+///
+/// make_fn!(sigma = Shift(3));
+/// assert_eq!(sigma!(2), 5);
+/// ```
+#[proc_macro_attribute]
+pub fn callable(arguments: TokenStream, item: TokenStream) -> TokenStream {
+    callable::callable(arguments.into(), item.into()).into()
 }
 
-macro_rules! make_proc {
-    ($(#[$attribute:meta])* $name:ident => $implementation:path) => {
-        $(#[$attribute])*
-        #[proc_macro]
-        pub fn $name(input: TokenStream) -> TokenStream {
-            $implementation(input.into()).into()
-        }
-    };
-        ($(#[$attribute:meta])* $name:ident) => {
-        $(#[$attribute])*
-        #[proc_macro]
-        pub fn $name(input: TokenStream) -> TokenStream {
-            $name::$name(input.into()).into()
-        }
-    };
-    ($(#[$attribute:meta])* $name:ident => no_arguments $implementation:path) => {
-        $(#[$attribute])*
-        #[proc_macro]
-        pub fn $name(input: TokenStream) -> TokenStream {
-            input::without_arguments(input.into(), $implementation).into()
-        }
-    };
-}
-
-make_attr! {
-    /// Gives one trait method a structural alias that [`make_fn!`](macro@make_fn) calls through.
-    ///
-    /// No shared callable trait is imposed: the attribute only marks which method of
-    /// a user-owned trait the generated same-name macro forwards its arguments to.
-    ///
-    /// # Arguments
-    ///
-    /// Write `#[callable(method)]` directly on a trait.
-    ///
-    /// | Argument | Accepted value | Default |
-    /// | --- | --- | --- |
-    /// | `method` | Name of an existing trait method, including a raw identifier | Required |
-    ///
-    /// One trailing comma is accepted. The selected method must exist; the
-    /// structural-call method name reserved by this macro must remain unused.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use these_macros_should_be_illegal::{callable, make_fn};
-    ///
-    /// #[callable(apply)]
-    /// trait Action {
-    ///     fn apply(&self, point: usize) -> usize;
-    /// }
-    ///
-    /// struct Shift(usize);
-    ///
-    /// impl Action for Shift {
-    ///     fn apply(&self, point: usize) -> usize {
-    ///         point + self.0
-    ///     }
-    /// }
-    ///
-    /// make_fn!(sigma = Shift(3));
-    /// assert_eq!(sigma!(2), 5);
-    /// ```
-    callable
-}
-
-make_attr! {
-    /// Adds the operators that follow from the ones a type already implements.
-    ///
-    /// `Sub` completes subtraction from addition and negation; `Neg = <scalar>`
-    /// completes negation from multiplication by that scalar.
-    ///
-    /// # Arguments
-    ///
-    /// Write `#[complete_ops(Sub, Neg = expression)]` directly on a type declaration.
-    ///
-    /// | Argument | Accepted value | Default |
-    /// | --- | --- | --- |
-    /// | `Sub` | Completes subtraction using addition and negation; takes no value | Not generated |
-    /// | `Neg = expression` | Rust expression for the scalar used to implement negation | Not generated |
-    ///
-    /// Select at least one operator. Entries are comma-separated, a trailing comma
-    /// is accepted, and each operator may occur once. Scalar expressions are emitted
-    /// unchanged, so macro calls are allowed there. Negation is generated before
-    /// subtraction when both are selected.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use std::ops::{Add, AddAssign, Neg};
-    /// # use these_macros_should_be_illegal::complete_ops;
-    ///
-    /// #[derive(Debug, PartialEq)]
-    /// #[complete_ops(Sub)]
-    /// struct Vector(f64);
-    ///
-    /// impl Add for Vector {
-    ///     type Output = Vector;
-    ///
-    ///     fn add(self, rhs: Vector) -> Vector {
-    ///         Vector(self.0 + rhs.0)
-    ///     }
-    /// }
-    ///
-    /// impl AddAssign for Vector {
-    ///     fn add_assign(&mut self, rhs: Vector) {
-    ///         self.0 += rhs.0;
-    ///     }
-    /// }
-    ///
-    /// impl Neg for Vector {
-    ///     type Output = Vector;
-    ///
-    ///     fn neg(self) -> Vector {
-    ///         Vector(-self.0)
-    ///     }
-    /// }
-    ///
-    /// assert_eq!(Vector(5.0) - Vector(2.0), Vector(3.0));
-    /// ```
-    complete_ops
+/// Adds the operators that follow from the ones a type already implements.
+///
+/// `Sub` completes subtraction from addition and negation; `Neg = <scalar>`
+/// completes negation from multiplication by that scalar.
+///
+/// # Arguments
+///
+/// Write `#[complete_ops(Sub, Neg = expression)]` directly on a type declaration.
+///
+/// | Argument | Accepted value | Default |
+/// | --- | --- | --- |
+/// | `Sub` | Completes subtraction using addition and negation; takes no value | Not generated |
+/// | `Neg = expression` | Rust expression for the scalar used to implement negation | Not generated |
+///
+/// Select at least one operator. Entries are comma-separated, a trailing comma
+/// is accepted, and each operator may occur once. Scalar expressions are emitted
+/// unchanged, so macro calls are allowed there. Negation is generated before
+/// subtraction when both are selected.
+///
+/// # Examples
+///
+/// ```
+/// # use std::ops::{Add, AddAssign, Neg};
+/// # use these_macros_should_be_illegal::complete_ops;
+///
+/// #[derive(Debug, PartialEq)]
+/// #[complete_ops(Sub)]
+/// struct Vector(f64);
+///
+/// impl Add for Vector {
+///     type Output = Vector;
+///
+///     fn add(self, rhs: Vector) -> Vector {
+///         Vector(self.0 + rhs.0)
+///     }
+/// }
+///
+/// impl AddAssign for Vector {
+///     fn add_assign(&mut self, rhs: Vector) {
+///         self.0 += rhs.0;
+///     }
+/// }
+///
+/// impl Neg for Vector {
+///     type Output = Vector;
+///
+///     fn neg(self) -> Vector {
+///         Vector(-self.0)
+///     }
+/// }
+///
+/// assert_eq!(Vector(5.0) - Vector(2.0), Vector(3.0));
+/// ```
+#[proc_macro_attribute]
+pub fn complete_ops(arguments: TokenStream, item: TokenStream) -> TokenStream {
+    complete_ops::complete_ops(arguments.into(), item.into()).into()
 }
 
 /// Assigns every enum variant one unique string literal.
@@ -250,24 +211,25 @@ pub fn discriminated_str(arguments: TokenStream, item: TokenStream) -> TokenStre
     discriminated_str::discriminated_str(arguments.into(), item.into()).into()
 }
 
-make_attr! {
-    /// Short alias of [`discriminated_str`](macro@discriminated_str).
-    ///
-    /// # Arguments
-    ///
-    /// Write `#[disctr(method)]` directly on an enum. `method` is the required
-    /// generated accessor name; one trailing comma is accepted. Variant string
-    /// literals and payloads use the same syntax as `discriminated_str`.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use these_macros_should_be_illegal::disctr;
-    /// #[disctr(name)]
-    /// enum Token { End = "end" }
-    /// assert_eq!(Token::End.name(), "end");
-    /// ```
-    disctr => discriminated_str::discriminated_str
+/// Short alias of [`discriminated_str`](macro@discriminated_str).
+///
+/// # Arguments
+///
+/// Write `#[disctr(method)]` directly on an enum. `method` is the required
+/// generated accessor name; one trailing comma is accepted. Variant string
+/// literals and payloads use the same syntax as `discriminated_str`.
+///
+/// # Examples
+///
+/// ```rust
+/// use these_macros_should_be_illegal::disctr;
+/// #[disctr(name)]
+/// enum Token { End = "end" }
+/// assert_eq!(Token::End.name(), "end");
+/// ```
+#[proc_macro_attribute]
+pub fn disctr(arguments: TokenStream, item: TokenStream) -> TokenStream {
+    discriminated_str::discriminated_str(arguments.into(), item.into()).into()
 }
 
 /// Generates an enum method from per-variant expressions written beside the variants.
@@ -566,588 +528,602 @@ pub fn log(item: TokenStream) -> TokenStream {
     log::log(item.into()).into()
 }
 
-make_attr! {
-    /// Repeats an operator implemented for references across its owned forms.
-    ///
-    /// From `impl Op<&Rhs> for &Lhs` it generates `Op<&Rhs>` and `Op<Rhs>` for `Lhs`,
-    /// and, when the result is `Lhs` itself, both `OpAssign` impls. Every generated
-    /// impl delegates to the attributed one; nothing is cloned.
-    ///
-    /// # Arguments
-    ///
-    /// Takes no arguments: write `#[overload_op]` or `#[overload_op()]` directly
-    /// on an operator implementation for references. The trait, operands, generics,
-    /// and output type are read from that implementation. Any nonempty argument
-    /// list is rejected.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use std::ops::Add;
-    /// use these_macros_should_be_illegal::overload_op;
-    ///
-    /// #[derive(Debug, PartialEq)]
-    /// struct Vector(f64, f64);
-    ///
-    /// #[overload_op]
-    /// impl Add<&Vector> for &Vector {
-    ///     type Output = Vector;
-    ///
-    ///     fn add(self, rhs: &Vector) -> Vector {
-    ///         Vector(self.0 + rhs.0, self.1 + rhs.1)
-    ///     }
-    /// }
-    ///
-    /// let mut total = Vector(1.0, 2.0) + Vector(3.0, 4.0);
-    /// total += &Vector(1.0, 1.0);
-    /// assert_eq!(total, Vector(5.0, 7.0));
-    /// ```
-    overload_op
+/// Repeats an operator implemented for references across its owned forms.
+///
+/// From `impl Op<&Rhs> for &Lhs` it generates `Op<&Rhs>` and `Op<Rhs>` for `Lhs`,
+/// and, when the result is `Lhs` itself, both `OpAssign` impls. Every generated
+/// impl delegates to the attributed one; nothing is cloned.
+///
+/// # Arguments
+///
+/// Takes no arguments: write `#[overload_op]` or `#[overload_op()]` directly
+/// on an operator implementation for references. The trait, operands, generics,
+/// and output type are read from that implementation. Any nonempty argument
+/// list is rejected.
+///
+/// # Examples
+///
+/// ```
+/// use std::ops::Add;
+/// use these_macros_should_be_illegal::overload_op;
+///
+/// #[derive(Debug, PartialEq)]
+/// struct Vector(f64, f64);
+///
+/// #[overload_op]
+/// impl Add<&Vector> for &Vector {
+///     type Output = Vector;
+///
+///     fn add(self, rhs: &Vector) -> Vector {
+///         Vector(self.0 + rhs.0, self.1 + rhs.1)
+///     }
+/// }
+///
+/// let mut total = Vector(1.0, 2.0) + Vector(3.0, 4.0);
+/// total += &Vector(1.0, 1.0);
+/// assert_eq!(total, Vector(5.0, 7.0));
+/// ```
+#[proc_macro_attribute]
+pub fn overload_op(arguments: TokenStream, item: TokenStream) -> TokenStream {
+    overload_op::overload_op(arguments.into(), item.into()).into()
 }
 
-make_proc! {
-    /// Declares a family of nested types in place and hoists them into ordinary items.
-    ///
-    /// Braced bodies become structs or enums by shape and parenthesized bodies
-    /// become tuple structs; every generated declaration is private unless a
-    /// visibility says otherwise, and each gets a same-name constructor macro.
-    /// [`emmun!`](macro@emmun) is an exact alias.
-    ///
-    /// # Arguments
-    ///
-    /// Supply root defaults through `strutuct! { @macro_args(...); declaration }`.
-    /// The same grammar is accepted by local `#[strutuct(...)]` configuration.
-    ///
-    /// | Argument | Accepted value | Default |
-    /// | --- | --- | --- |
-    /// | Visibility | `pub`, restricted `pub(...)`, or explicit `priv` | Private |
-    /// | `inclusions` / `no_inclusions` (`inc` / `no_inc`) | Bare flag; generate consuming enum inclusion functions | Disabled |
-    /// | `product_variants` / `no_product_variants` (`prod` / `no_prod`) | Bare flag; pack a variant's fields into one product payload | Disabled |
-    /// | `reverse_concat` / `no_reverse_concat` (`rev` / `no_rev`) | Bare flag; reverse generated name concatenation | Disabled |
-    /// | `allow_missing_docs` / `no_allow_missing_docs` (`undoc` / `no_undoc`) | Bare flag; allow undocumented declarations and members throughout this branch | Disabled |
-    ///
-    /// Arguments are optional and comma-separated, with a trailing comma allowed.
-    /// Full names and short aliases are interchangeable, including their `no_` forms.
-    /// A flag enables its option; its `no_` form disables it. Both forms of the
-    /// same option in one list count as duplicates, including mixed full and short names. Boolean assignments are rejected.
-    /// Unknown or duplicate options in one list are rejected. Local configuration
-    /// overrides inherited defaults for its branch; an explicitly written visibility
-    /// applies at that declaration or field. The body is the nested declaration DSL,
-    /// including any ordinary attributes to propagate.
-    ///
-    /// Documentation on declarations, variants, and fields is preserved as written;
-    /// no placeholder descriptions are added. Ordinary `missing_docs` lint settings
-    /// apply. Use `allow_missing_docs` (`undoc`) to emit `#[allow(missing_docs)]`
-    /// throughout a generated branch, including hoisted nested declarations.
-    /// `no_allow_missing_docs` (`no_undoc`) stops inheriting that option for a branch;
-    /// ordinary Rust lint inheritance still applies within each declaration.
-    ///
-    /// Missing documentation remains an error when the caller denies it:
-    ///
-    /// ```rust,compile_fail
-    /// #![deny(missing_docs)]
-    /// //! A crate requiring documentation.
-    /// use these_macros_should_be_illegal::strutuct;
-    /// strutuct! { pub Undocumented { pub value: u8 } }
-    /// fn main() {}
-    /// ```
-    ///
-    /// Opt out for the complete generated family:
-    ///
-    /// ```rust
-    /// #![deny(missing_docs)]
-    /// //! A crate allowing one undocumented family.
-    /// use these_macros_should_be_illegal::strutuct;
-    /// strutuct! { @macro_args(pub, undoc); Undocumented { pub child: Child { pub value: u8 } } }
-    /// fn main() {}
-    /// ```
-    ///
-    /// Declaration-local attributes are separate from root parameters:
-    ///
-    /// | Attribute | Arguments and effect | Default |
-    /// | --- | --- | --- |
-    /// | `#[strutuct(...)]` | The flags and visibility above, inherited by this branch | Inherit enclosing configuration |
-    /// | `#[derive(Trait, ...)]` | Comma-separated trait paths added to this declaration and its descendants | Inherit enclosing derives |
-    /// | `#[underive(Trait, ...)]` | Comma-separated trait paths removed from this branch's inherited derives | Remove nothing |
-    /// | `#[doc = "..."]` | Documentation for this declaration only | None |
-    /// | `#[cfg(...)]`, `#[cfg_attr(...)]` | Ordinary Rust conditional attributes, also guarding constructor macros | Unconditional |
-    /// | Other outer attributes | Forwarded unchanged according to ordinary attribute syntax | None |
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use these_macros_should_be_illegal::strutuct;
-    ///
-    /// strutuct!{ Request
-    ///     method: Method { Get, Post },
-    ///     body: String?,
-    /// }
-    ///
-    /// let request = Request { method: RequestMethod::Get, body: None };
-    /// assert!(matches!(request.method, RequestMethod::Get));
-    /// ```
-    ///
-    /// A visibility written before a field or declaration applies only there,
-    /// while one written in `#[strutuct(...)]` becomes the default for the whole
-    /// branch below it:
-    ///
-    /// ```
-    /// # use these_macros_should_be_illegal::strutuct;
-    ///
-    /// mod api {
-    ///     # use these_macros_should_be_illegal::strutuct;
-    ///     strutuct!{
-    ///         #[strutuct(pub)]
-    ///         struct Request { method: Method { Get, Post } }
-    ///     }
-    /// }
-    ///
-    /// let request = api::Request { method: api::RequestMethod::Get };
-    /// assert!(matches!(request.method, api::RequestMethod::Get));
-    /// ```
-    strutuct
+/// Declares a family of nested types in place and hoists them into ordinary items.
+///
+/// Braced bodies become structs or enums by shape and parenthesized bodies
+/// become tuple structs; every generated declaration is private unless a
+/// visibility says otherwise, and each gets a same-name constructor macro.
+/// [`emmun!`](macro@emmun) is an exact alias.
+///
+/// # Arguments
+///
+/// Supply root defaults through `strutuct! { @macro_args(...); declaration }`.
+/// The same grammar is accepted by local `#[strutuct(...)]` configuration.
+///
+/// | Argument | Accepted value | Default |
+/// | --- | --- | --- |
+/// | Visibility | `pub`, restricted `pub(...)`, or explicit `priv` | Private |
+/// | `inclusions` / `no_inclusions` (`inc` / `no_inc`) | Bare flag; generate consuming enum inclusion functions | Disabled |
+/// | `product_variants` / `no_product_variants` (`prod` / `no_prod`) | Bare flag; pack a variant's fields into one product payload | Disabled |
+/// | `reverse_concat` / `no_reverse_concat` (`rev` / `no_rev`) | Bare flag; reverse generated name concatenation | Disabled |
+/// | `allow_missing_docs` / `no_allow_missing_docs` (`undoc` / `no_undoc`) | Bare flag; allow undocumented declarations and members throughout this branch | Disabled |
+///
+/// Arguments are optional and comma-separated, with a trailing comma allowed.
+/// Full names and short aliases are interchangeable, including their `no_` forms.
+/// A flag enables its option; its `no_` form disables it. Both forms of the
+/// same option in one list count as duplicates, including mixed full and short names. Boolean assignments are rejected.
+/// Unknown or duplicate options in one list are rejected. Local configuration
+/// overrides inherited defaults for its branch; an explicitly written visibility
+/// applies at that declaration or field. The body is the nested declaration DSL,
+/// including any ordinary attributes to propagate.
+///
+/// Documentation on declarations, variants, and fields is preserved as written;
+/// no placeholder descriptions are added. Ordinary `missing_docs` lint settings
+/// apply. Use `allow_missing_docs` (`undoc`) to emit `#[allow(missing_docs)]`
+/// throughout a generated branch, including hoisted nested declarations.
+/// `no_allow_missing_docs` (`no_undoc`) stops inheriting that option for a branch;
+/// ordinary Rust lint inheritance still applies within each declaration.
+///
+/// Missing documentation remains an error when the caller denies it:
+///
+/// ```rust,compile_fail
+/// #![deny(missing_docs)]
+/// //! A crate requiring documentation.
+/// use these_macros_should_be_illegal::strutuct;
+/// strutuct! { pub Undocumented { pub value: u8 } }
+/// fn main() {}
+/// ```
+///
+/// Opt out for the complete generated family:
+///
+/// ```rust
+/// #![deny(missing_docs)]
+/// //! A crate allowing one undocumented family.
+/// use these_macros_should_be_illegal::strutuct;
+/// strutuct! { @macro_args(pub, undoc); Undocumented { pub child: Child { pub value: u8 } } }
+/// fn main() {}
+/// ```
+///
+/// Declaration-local attributes are separate from root parameters:
+///
+/// | Attribute | Arguments and effect | Default |
+/// | --- | --- | --- |
+/// | `#[strutuct(...)]` | The flags and visibility above, inherited by this branch | Inherit enclosing configuration |
+/// | `#[derive(Trait, ...)]` | Comma-separated trait paths added to this declaration and its descendants | Inherit enclosing derives |
+/// | `#[underive(Trait, ...)]` | Comma-separated trait paths removed from this branch's inherited derives | Remove nothing |
+/// | `#[doc = "..."]` | Documentation for this declaration only | None |
+/// | `#[cfg(...)]`, `#[cfg_attr(...)]` | Ordinary Rust conditional attributes, also guarding constructor macros | Unconditional |
+/// | Other outer attributes | Forwarded unchanged according to ordinary attribute syntax | None |
+///
+/// # Examples
+///
+/// ```
+/// # use these_macros_should_be_illegal::strutuct;
+///
+/// strutuct!{ Request
+///     method: Method { Get, Post },
+///     body: String?,
+/// }
+///
+/// let request = Request { method: RequestMethod::Get, body: None };
+/// assert!(matches!(request.method, RequestMethod::Get));
+/// ```
+///
+/// A visibility written before a field or declaration applies only there,
+/// while one written in `#[strutuct(...)]` becomes the default for the whole
+/// branch below it:
+///
+/// ```
+/// # use these_macros_should_be_illegal::strutuct;
+///
+/// mod api {
+///     # use these_macros_should_be_illegal::strutuct;
+///     strutuct!{
+///         #[strutuct(pub)]
+///         struct Request { method: Method { Get, Post } }
+///     }
+/// }
+///
+/// let request = api::Request { method: api::RequestMethod::Get };
+/// assert!(matches!(request.method, api::RequestMethod::Get));
+/// ```
+#[proc_macro]
+pub fn strutuct(input: TokenStream) -> TokenStream {
+    strutuct::strutuct(input.into()).into()
 }
 
-make_proc! {
-    /// An exact alias of [`strutuct!`](macro@strutuct), for declarations read as enums.
-    ///
-    /// # Arguments
-    ///
-    /// Accepts exactly the [`strutuct!`](macro@strutuct#arguments) argument grammar.
-    ///
-    /// | Argument | Accepted value | Default |
-    /// | --- | --- | --- |
-    /// | Visibility | `pub`, restricted `pub(...)`, or explicit `priv` | Private |
-    /// | `inclusions` / `no_inclusions` (`inc` / `no_inc`) | Bare flag | Disabled |
-    /// | `product_variants` / `no_product_variants` (`prod` / `no_prod`) | Bare flag | Disabled |
-    /// | `reverse_concat` / `no_reverse_concat` (`rev` / `no_rev`) | Bare flag | Disabled |
-    /// | `allow_missing_docs` / `no_allow_missing_docs` (`undoc` / `no_undoc`) | Bare flag; allow undocumented declarations and members throughout this branch | Disabled |
-    ///
-    /// Use the direct `@macro_args(...);` prefix. Local
-    /// configuration is spelled `#[strutuct(...)]`, including when the invocation is
-    /// named `emmun!`. Precedence, comma rules, and body syntax match `strutuct!`.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use these_macros_should_be_illegal::emmun;
-    /// emmun! { Choice { Yes, No } }
-    /// assert!(matches!(Choice::Yes, Choice::Yes));
-    /// ```
-    emmun => strutuct::strutuct
+/// An exact alias of [`strutuct!`](macro@strutuct), for declarations read as enums.
+///
+/// # Arguments
+///
+/// Accepts exactly the [`strutuct!`](macro@strutuct#arguments) argument grammar.
+///
+/// | Argument | Accepted value | Default |
+/// | --- | --- | --- |
+/// | Visibility | `pub`, restricted `pub(...)`, or explicit `priv` | Private |
+/// | `inclusions` / `no_inclusions` (`inc` / `no_inc`) | Bare flag | Disabled |
+/// | `product_variants` / `no_product_variants` (`prod` / `no_prod`) | Bare flag | Disabled |
+/// | `reverse_concat` / `no_reverse_concat` (`rev` / `no_rev`) | Bare flag | Disabled |
+/// | `allow_missing_docs` / `no_allow_missing_docs` (`undoc` / `no_undoc`) | Bare flag; allow undocumented declarations and members throughout this branch | Disabled |
+///
+/// Use the direct `@macro_args(...);` prefix. Local
+/// configuration is spelled `#[strutuct(...)]`, including when the invocation is
+/// named `emmun!`. Precedence, comma rules, and body syntax match `strutuct!`.
+///
+/// # Examples
+///
+/// ```rust
+/// use these_macros_should_be_illegal::emmun;
+/// emmun! { Choice { Yes, No } }
+/// assert!(matches!(Choice::Yes, Choice::Yes));
+/// ```
+#[proc_macro]
+pub fn emmun(input: TokenStream) -> TokenStream {
+    strutuct::strutuct(input.into()).into()
 }
 
 // Low-level syntax extensions rewriting a whole token stream.
 
-make_proc! {
-    /// Rewrites literal strings in exactly the supplied token stream.
-    ///
-    /// An optional leading `exclude_macros = (names);` option keeps the invocations
-    /// of the listed macros opaque, so the rewriting never descends into them.
-    ///
-    /// # Arguments
-    ///
-    /// Supply options directly: write `literally_literal_string! { @macro_args(...); body }` directly.
-    ///
-    /// | Argument | Accepted value | Default |
-    /// | --- | --- | --- |
-    /// | `exclude_macros` (`exclude`) | `= (name, ...)`, a list of macro identifiers to keep opaque | Empty list |
-    ///
-    /// The option is optional and may occur once; mixing its full and short names
-    /// also counts as a duplicate. Trailing commas are accepted both
-    /// inside the list and after the option. Names match the final macro identifier
-    /// exactly, including rawness; use `macro_rules` to exclude declarative macro
-    /// bodies. The older `exclude_macros = (names); body` form is also accepted.
-    /// The body is an arbitrary token stream and is rewritten recursively.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use these_macros_should_be_illegal::literally_literal_string;
-    /// literally_literal_string! {
-    ///     let literal_string: String = @@"hello";
-    ///     let usual_string: String = "hello".to_string();
-    ///     assert_eq!(literal_string, usual_string);
-    /// }
-    /// ```
-    ///
-    /// ```
-    /// # use these_macros_should_be_illegal::literally_literal_string;
-    /// macro_rules! raw_tokens { ($($tokens:tt)*) => { "borrowed" }; }
-    ///
-    /// literally_literal_string! {
-    ///     exclude_macros = (raw_tokens);
-    ///     fn value() -> &'static str { raw_tokens!(@@"untouched") }
-    /// }
-    ///
-    /// fn main() {
-    ///     assert_eq!(value(), "borrowed");
-    /// }
-    /// ```
-    #[doc(alias = "lls")]
-    literally_literal_string
+/// Rewrites literal strings in exactly the supplied token stream.
+///
+/// An optional leading `exclude_macros = (names);` option keeps the invocations
+/// of the listed macros opaque, so the rewriting never descends into them.
+///
+/// # Arguments
+///
+/// Supply options directly: write `literally_literal_string! { @macro_args(...); body }` directly.
+///
+/// | Argument | Accepted value | Default |
+/// | --- | --- | --- |
+/// | `exclude_macros` (`exclude`) | `= (name, ...)`, a list of macro identifiers to keep opaque | Empty list |
+///
+/// The option is optional and may occur once; mixing its full and short names
+/// also counts as a duplicate. Trailing commas are accepted both
+/// inside the list and after the option. Names match the final macro identifier
+/// exactly, including rawness; use `macro_rules` to exclude declarative macro
+/// bodies. The older `exclude_macros = (names); body` form is also accepted.
+/// The body is an arbitrary token stream and is rewritten recursively.
+///
+/// # Examples
+///
+/// ```
+/// # use these_macros_should_be_illegal::literally_literal_string;
+/// literally_literal_string! {
+///     let literal_string: String = @@"hello";
+///     let usual_string: String = "hello".to_string();
+///     assert_eq!(literal_string, usual_string);
+/// }
+/// ```
+///
+/// ```
+/// # use these_macros_should_be_illegal::literally_literal_string;
+/// macro_rules! raw_tokens { ($($tokens:tt)*) => { "borrowed" }; }
+///
+/// literally_literal_string! {
+///     exclude_macros = (raw_tokens);
+///     fn value() -> &'static str { raw_tokens!(@@"untouched") }
+/// }
+///
+/// fn main() {
+///     assert_eq!(value(), "borrowed");
+/// }
+/// ```
+#[doc(alias = "lls")]
+#[proc_macro]
+pub fn literally_literal_string(input: TokenStream) -> TokenStream {
+    literally_literal_string::literally_literal_string(input.into()).into()
 }
 
-make_proc! {
-    /// Short alias of [`literally_literal_string!`](macro@literally_literal_string).
-    ///
-    /// # Arguments
-    ///
-    /// Accepts `exclude_macros = (names)` (short name `exclude`), defaulting to an
-    /// empty list. Supply it through `@macro_args(...);`,
-    /// or the inline `exclude_macros = (names);` form. The body is an arbitrary
-    /// token stream, recursively rewritten with the same exclusions and comma
-    /// rules as `literally_literal_string!`.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use these_macros_should_be_illegal::lls;
-    /// let owned: String = lls!(@@"owned");
-    /// assert_eq!(owned, "owned");
-    /// ```
-    lls => literally_literal_string::literally_literal_string
+/// Short alias of [`literally_literal_string!`](macro@literally_literal_string).
+///
+/// # Arguments
+///
+/// Accepts `exclude_macros = (names)` (short name `exclude`), defaulting to an
+/// empty list. Supply it through `@macro_args(...);`,
+/// or the inline `exclude_macros = (names);` form. The body is an arbitrary
+/// token stream, recursively rewritten with the same exclusions and comma
+/// rules as `literally_literal_string!`.
+///
+/// # Examples
+///
+/// ```rust
+/// use these_macros_should_be_illegal::lls;
+/// let owned: String = lls!(@@"owned");
+/// assert_eq!(owned, "owned");
+/// ```
+#[proc_macro]
+pub fn lls(input: TokenStream) -> TokenStream {
+    literally_literal_string::literally_literal_string(input.into()).into()
 }
 
-make_proc! {
-    /// Clones a shared match-arm RHS for alternatives separated by `||`.
-    ///
-    /// Parenthesize `(pattern if guard)` when one alternative has its own guard. An
-    /// optional leading `exclude_macros = (names);` option keeps the invocations of
-    /// the listed macros opaque, so the rewriting never descends into them.
-    ///
-    /// # Arguments
-    ///
-    /// Supply options directly: write `shared_match_arms! { @macro_args(...); body }` directly.
-    ///
-    /// | Argument | Accepted value | Default |
-    /// | --- | --- | --- |
-    /// | `exclude_macros` (`exclude`) | `= (name, ...)`, a list of macro identifiers to keep opaque | Empty list |
-    ///
-    /// The option is optional and may occur once; mixing its full and short names
-    /// also counts as a duplicate. Trailing commas are accepted in
-    /// the list and after the option. Names match the final macro identifier exactly,
-    /// including rawness; `macro_rules` excludes declarative macro bodies. The older
-    /// `exclude_macros = (names); body` form remains accepted. The body is an
-    /// arbitrary token stream, with nested groups rewritten recursively.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use these_macros_should_be_illegal::shared_match_arms;
-    /// enum Value {
-    ///     Number(u32),
-    ///     Character(char),
-    /// }
-    ///
-    /// let value = Value::Number(3);
-    /// let text = shared_match_arms! {
-    ///     match value {
-    ///         Value::Number(value) || Value::Character(value) => value.to_string(),
-    ///     }
-    /// };
-    ///
-    /// assert_eq!(text, "3");
-    /// ```
-    #[doc(alias = "sma")]
-    shared_match_arms
+/// Clones a shared match-arm RHS for alternatives separated by `||`.
+///
+/// Parenthesize `(pattern if guard)` when one alternative has its own guard. An
+/// optional leading `exclude_macros = (names);` option keeps the invocations of
+/// the listed macros opaque, so the rewriting never descends into them.
+///
+/// # Arguments
+///
+/// Supply options directly: write `shared_match_arms! { @macro_args(...); body }` directly.
+///
+/// | Argument | Accepted value | Default |
+/// | --- | --- | --- |
+/// | `exclude_macros` (`exclude`) | `= (name, ...)`, a list of macro identifiers to keep opaque | Empty list |
+///
+/// The option is optional and may occur once; mixing its full and short names
+/// also counts as a duplicate. Trailing commas are accepted in
+/// the list and after the option. Names match the final macro identifier exactly,
+/// including rawness; `macro_rules` excludes declarative macro bodies. The older
+/// `exclude_macros = (names); body` form remains accepted. The body is an
+/// arbitrary token stream, with nested groups rewritten recursively.
+///
+/// # Examples
+///
+/// ```
+/// # use these_macros_should_be_illegal::shared_match_arms;
+/// enum Value {
+///     Number(u32),
+///     Character(char),
+/// }
+///
+/// let value = Value::Number(3);
+/// let text = shared_match_arms! {
+///     match value {
+///         Value::Number(value) || Value::Character(value) => value.to_string(),
+///     }
+/// };
+///
+/// assert_eq!(text, "3");
+/// ```
+#[doc(alias = "sma")]
+#[proc_macro]
+pub fn shared_match_arms(input: TokenStream) -> TokenStream {
+    shared_match_arms::shared_match_arms(input.into()).into()
 }
 
-make_proc! {
-    /// Short alias of [`shared_match_arms!`](macro@shared_match_arms).
-    ///
-    /// # Arguments
-    ///
-    /// Accepts `exclude_macros = (names)` (short name `exclude`), defaulting to an
-    /// empty list. Supply it through `@macro_args(...);`,
-    /// or the inline `exclude_macros = (names);` form. The body is an arbitrary
-    /// token stream, recursively rewritten with the same exclusions, guards,
-    /// and comma rules as `shared_match_arms!`.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use these_macros_should_be_illegal::sma;
-    /// assert_eq!(sma!(match 2 { 1 || 2 => "small", _ => "other" }), "small");
-    /// ```
-    sma => shared_match_arms::shared_match_arms
+/// Short alias of [`shared_match_arms!`](macro@shared_match_arms).
+///
+/// # Arguments
+///
+/// Accepts `exclude_macros = (names)` (short name `exclude`), defaulting to an
+/// empty list. Supply it through `@macro_args(...);`,
+/// or the inline `exclude_macros = (names);` form. The body is an arbitrary
+/// token stream, recursively rewritten with the same exclusions, guards,
+/// and comma rules as `shared_match_arms!`.
+///
+/// # Examples
+///
+/// ```rust
+/// use these_macros_should_be_illegal::sma;
+/// assert_eq!(sma!(match 2 { 1 || 2 => "small", _ => "other" }), "small");
+/// ```
+#[proc_macro]
+pub fn sma(input: TokenStream) -> TokenStream {
+    shared_match_arms::shared_match_arms(input.into()).into()
 }
 
-make_proc! {
-    /// Loads an out-of-line module and injects function-like macros around its body.
-    ///
-    /// The module file is found as for an ordinary `mod` declaration, or through a
-    /// `#[path]` attribute, and may contain syntax that only the injected macros
-    /// accept. Here it uses `@@"..."` owned string literals:
-    ///
-    /// # Arguments
-    ///
-    /// Write `expand!(macros, options; module)`, or supply the same arguments via
-    /// `@macro_args(macros, options);` and leave only the module in the body.
-    ///
-    /// | Argument | Accepted value | Default |
-    /// | --- | --- | --- |
-    /// | `macros` | One or more Rust macro paths, including qualified paths | Required |
-    /// | `exclude_macros` (`exclude`) | `= (name, ...)`, opaque macro identifiers passed to each injected macro | Empty list |
-    ///
-    /// `exclude` is an alias for `exclude_macros`, with the same validation.
-    /// Paths and options may be interspersed and are comma-separated; trailing
-    /// commas are accepted. The exclusion option may occur once. Macro paths are
-    /// nested in the written order, with the first outermost. The body must be one
-    /// out-of-line module declaration; its visibility and attributes are preserved,
-    /// and `#[path = "..."]` selects an explicit module file.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use these_macros_should_be_illegal::expand;
-    ///
-    /// // The macro runs inside the generated module, so name it by full path.
-    /// expand!(
-    ///     these_macros_should_be_illegal::literally_literal_string;
-    ///     #[path = "../tests/fixtures/literally_literal_string_module.rs"]
-    ///     mod experiments;
-    /// );
-    ///
-    /// fn main() {
-    ///     let owned: String = experiments::owned_string();
-    ///     assert_eq!(owned, "loaded outside Rust");
-    /// }
-    /// ```
-    expand
+/// Loads an out-of-line module and injects function-like macros around its body.
+///
+/// The module file is found as for an ordinary `mod` declaration, or through a
+/// `#[path]` attribute, and may contain syntax that only the injected macros
+/// accept. Here it uses `@@"..."` owned string literals:
+///
+/// # Arguments
+///
+/// Write `expand!(macros, options; module)`, or supply the same arguments via
+/// `@macro_args(macros, options);` and leave only the module in the body.
+///
+/// | Argument | Accepted value | Default |
+/// | --- | --- | --- |
+/// | `macros` | One or more Rust macro paths, including qualified paths | Required |
+/// | `exclude_macros` (`exclude`) | `= (name, ...)`, opaque macro identifiers passed to each injected macro | Empty list |
+///
+/// `exclude` is an alias for `exclude_macros`, with the same validation.
+/// Paths and options may be interspersed and are comma-separated; trailing
+/// commas are accepted. The exclusion option may occur once. Macro paths are
+/// nested in the written order, with the first outermost. The body must be one
+/// out-of-line module declaration; its visibility and attributes are preserved,
+/// and `#[path = "..."]` selects an explicit module file.
+///
+/// # Examples
+///
+/// ```
+/// use these_macros_should_be_illegal::expand;
+///
+/// // The macro runs inside the generated module, so name it by full path.
+/// expand!(
+///     these_macros_should_be_illegal::literally_literal_string;
+///     #[path = "../tests/fixtures/literally_literal_string_module.rs"]
+///     mod experiments;
+/// );
+///
+/// fn main() {
+///     let owned: String = experiments::owned_string();
+///     assert_eq!(owned, "loaded outside Rust");
+/// }
+/// ```
+#[proc_macro]
+pub fn expand(input: TokenStream) -> TokenStream {
+    expand::expand(input.into()).into()
 }
 
-make_attr! {
-    /// Moves the outer attributes of an item-position macro invocation into its input.
-    ///
-    /// The receiving function-like macro then decides what the attributes mean.
-    ///
-    /// # Arguments
-    ///
-    /// Takes no arguments: write `#[forward_attributes]` or
-    /// `#[forward_attributes()]` directly on an item-position macro invocation.
-    /// Nonempty arguments are rejected. The invocation's remaining outer attributes
-    /// are forwarded into its body before a `;` separator. An existing
-    /// `@macro_args(...);` parameter prefix remains first.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use these_macros_should_be_illegal::{forward_attributes, strutuct};
-    ///
-    /// #[forward_attributes]
-    /// #[derive(Debug, PartialEq)]
-    /// strutuct! {
-    ///     State { Ready, Waiting }
-    /// }
-    ///
-    /// fn main() {
-    ///     assert_eq!(format!("{:?}", State::Waiting), "Waiting");
-    /// }
-    /// ```
-    forward_attributes
+/// Moves the outer attributes of an item-position macro invocation into its input.
+///
+/// The receiving function-like macro then decides what the attributes mean.
+///
+/// # Arguments
+///
+/// Takes no arguments: write `#[forward_attributes]` or
+/// `#[forward_attributes()]` directly on an item-position macro invocation.
+/// Nonempty arguments are rejected. The invocation's remaining outer attributes
+/// are forwarded into its body before a `;` separator. An existing
+/// `@macro_args(...);` parameter prefix remains first.
+///
+/// # Examples
+///
+/// ```
+/// use these_macros_should_be_illegal::{forward_attributes, strutuct};
+///
+/// #[forward_attributes]
+/// #[derive(Debug, PartialEq)]
+/// strutuct! {
+///     State { Ready, Waiting }
+/// }
+///
+/// fn main() {
+///     assert_eq!(format!("{:?}", State::Waiting), "Waiting");
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn forward_attributes(arguments: TokenStream, item: TokenStream) -> TokenStream {
+    forward_attributes::forward_attributes(arguments.into(), item.into()).into()
 }
 
-make_proc! {
-    /// Creates a local value and a same-name macro providing function-like calls.
-    ///
-    /// The value's type must expose the method generated by [`callable`](macro@callable). The
-    /// accepted syntax is `[mut] name = expression`.
-    ///
-    /// # Arguments
-    ///
-    /// Takes no separate parameters. An optional `@macro_args();` prefix is
-    /// accepted; a nonempty parameter list is rejected.
-    ///
-    /// The body is `[mut] name = expression`, with one optional trailing semicolon.
-    ///
-    /// | Argument | Accepted value | Default |
-    /// | --- | --- | --- |
-    /// | `mut` | Bare keyword allowing mutable access to the bound value | Immutable binding |
-    /// | `name` | Identifier naming both the binding and the generated macro | Required |
-    /// | `expression` | Any Rust expression, emitted unchanged | Required |
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use these_macros_should_be_illegal::{callable, make_fn};
-    ///
-    /// #[callable(apply)]
-    /// trait Action {
-    ///     fn apply(&self, point: usize) -> usize;
-    /// }
-    ///
-    /// struct Shift(usize);
-    ///
-    /// impl Action for Shift {
-    ///     fn apply(&self, point: usize) -> usize {
-    ///         point + self.0
-    ///     }
-    /// }
-    ///
-    /// make_fn!(sigma = Shift(3));
-    /// assert_eq!(sigma!(2), 5);
-    /// ```
-    make_fn => no_arguments meta::make_fn::make_fn
+/// Creates a local value and a same-name macro providing function-like calls.
+///
+/// The value's type must expose the method generated by [`callable`](macro@callable). The
+/// accepted syntax is `[mut] name = expression`.
+///
+/// # Arguments
+///
+/// Takes no separate parameters. An optional `@macro_args();` prefix is
+/// accepted; a nonempty parameter list is rejected.
+///
+/// The body is `[mut] name = expression`, with one optional trailing semicolon.
+///
+/// | Argument | Accepted value | Default |
+/// | --- | --- | --- |
+/// | `mut` | Bare keyword allowing mutable access to the bound value | Immutable binding |
+/// | `name` | Identifier naming both the binding and the generated macro | Required |
+/// | `expression` | Any Rust expression, emitted unchanged | Required |
+///
+/// # Examples
+///
+/// ```
+/// use these_macros_should_be_illegal::{callable, make_fn};
+///
+/// #[callable(apply)]
+/// trait Action {
+///     fn apply(&self, point: usize) -> usize;
+/// }
+///
+/// struct Shift(usize);
+///
+/// impl Action for Shift {
+///     fn apply(&self, point: usize) -> usize {
+///         point + self.0
+///     }
+/// }
+///
+/// make_fn!(sigma = Shift(3));
+/// assert_eq!(sigma!(2), 5);
+/// ```
+#[proc_macro]
+pub fn make_fn(input: TokenStream) -> TokenStream {
+    input::without_arguments(input.into(), meta::make_fn::make_fn).into()
 }
 
-make_proc! {
-    /// Permutes comma-separated token trees using standard cycle notation.
-    ///
-    /// Cycles compose from right to left and positions are one-based. Token trees
-    /// beyond the largest mentioned position remain fixed. Spaces are required
-    /// between positions because `14` is one integer token while `1 4` is two.
-    ///
-    /// ```rust,ignore
-    /// perm! { ((1 4 3)), a, b, c, d, e }
-    /// // expands to the token stream: c, b, d, a, e
-    /// ```
-    ///
-    /// An empty cycle product demonstrates the identity in an ordinary expression
-    /// context; nontrivial products deliberately return a raw comma-separated
-    /// stream for structural consumers.
-    ///
-    /// # Arguments
-    ///
-    /// Takes no separate parameters. An optional `@macro_args();` prefix is
-    /// accepted; a nonempty parameter list is rejected.
-    ///
-    /// The body is `(cycles), tree, ...`.
-    ///
-    /// | Argument | Accepted value | Default |
-    /// | --- | --- | --- |
-    /// | `cycles` | Adjacent parenthesized cycles, each containing distinct positive integer positions | Empty product `()` is the identity |
-    /// | `tree, ...` | Comma-separated individual token trees; group multi-token expressions | Empty stream when no positions are referenced |
-    ///
-    /// Each cycle is a parenthesized sequence of
-    /// space-separated positive integer positions, such as `(1 4 3)`. Multiple
-    /// cycles are adjacent inside the outer parentheses. An empty cycle product
-    /// `()` is the identity. Cycles compose from right to left; zero positions,
-    /// repeated positions within one cycle, and references beyond the supplied
-    /// trees are rejected. Operands are individual token trees separated by commas,
-    /// with a trailing comma accepted; group multi-token expressions as one tree.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use these_macros_should_be_illegal::perm;
-    /// let fixed: &str = perm!((), "fixed");
-    /// assert_eq!(fixed.len(), 5);
-    /// ```
-    perm => no_arguments meta::perm::perm
+/// Permutes comma-separated token trees using standard cycle notation.
+///
+/// Cycles compose from right to left and positions are one-based. Token trees
+/// beyond the largest mentioned position remain fixed. Spaces are required
+/// between positions because `14` is one integer token while `1 4` is two.
+///
+/// ```rust,ignore
+/// perm! { ((1 4 3)), a, b, c, d, e }
+/// // expands to the token stream: c, b, d, a, e
+/// ```
+///
+/// An empty cycle product demonstrates the identity in an ordinary expression
+/// context; nontrivial products deliberately return a raw comma-separated
+/// stream for structural consumers.
+///
+/// # Arguments
+///
+/// Takes no separate parameters. An optional `@macro_args();` prefix is
+/// accepted; a nonempty parameter list is rejected.
+///
+/// The body is `(cycles), tree, ...`.
+///
+/// | Argument | Accepted value | Default |
+/// | --- | --- | --- |
+/// | `cycles` | Adjacent parenthesized cycles, each containing distinct positive integer positions | Empty product `()` is the identity |
+/// | `tree, ...` | Comma-separated individual token trees; group multi-token expressions | Empty stream when no positions are referenced |
+///
+/// Each cycle is a parenthesized sequence of
+/// space-separated positive integer positions, such as `(1 4 3)`. Multiple
+/// cycles are adjacent inside the outer parentheses. An empty cycle product
+/// `()` is the identity. Cycles compose from right to left; zero positions,
+/// repeated positions within one cycle, and references beyond the supplied
+/// trees are rejected. Operands are individual token trees separated by commas,
+/// with a trailing comma accepted; group multi-token expressions as one tree.
+///
+/// # Examples
+///
+/// ```
+/// # use these_macros_should_be_illegal::perm;
+/// let fixed: &str = perm!((), "fixed");
+/// assert_eq!(fixed.len(), 5);
+/// ```
+#[proc_macro]
+pub fn perm(input: TokenStream) -> TokenStream {
+    input::without_arguments(input.into(), meta::perm::perm).into()
 }
 
-make_proc! {
-    /// Reflects two macro invocation objects around an opaque token-stream body.
-    ///
-    /// `reflect!(first, second; body)` constructs
-    /// `second! { first! { body } }`. Consequently `second` expands before
-    /// `first`, reversing the expansion order of `first! { second! { body } }`.
-    ///
-    /// # Arguments
-    ///
-    /// Takes no separate parameters. An optional `@macro_args();` prefix is
-    /// accepted; a nonempty parameter list is rejected.
-    ///
-    /// The body is `first, second; body`.
-    ///
-    /// | Argument | Accepted value | Default |
-    /// | --- | --- | --- |
-    /// | `first` | Macro path, optionally qualified and preceded by outer attributes; becomes the inner invocation | Required |
-    /// | `second` | Macro path, optionally qualified and preceded by outer attributes; becomes the outer invocation | Required |
-    /// | `body` | Opaque tokens supplied to the inner invocation | Empty token stream |
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use these_macros_should_be_illegal::reflect;
-    /// macro_rules! add_one { ($value:expr) => { 1 + $value }; }
-    /// macro_rules! double { ($value:expr) => { 2 * $value }; }
-    /// assert_eq!(reflect!(add_one, double; 3), 8);
-    /// ```
-    reflect => no_arguments meta::reflect::reflect
+/// Reflects two macro invocation objects around an opaque token-stream body.
+///
+/// `reflect!(first, second; body)` constructs
+/// `second! { first! { body } }`. Consequently `second` expands before
+/// `first`, reversing the expansion order of `first! { second! { body } }`.
+///
+/// # Arguments
+///
+/// Takes no separate parameters. An optional `@macro_args();` prefix is
+/// accepted; a nonempty parameter list is rejected.
+///
+/// The body is `first, second; body`.
+///
+/// | Argument | Accepted value | Default |
+/// | --- | --- | --- |
+/// | `first` | Macro path, optionally qualified and preceded by outer attributes; becomes the inner invocation | Required |
+/// | `second` | Macro path, optionally qualified and preceded by outer attributes; becomes the outer invocation | Required |
+/// | `body` | Opaque tokens supplied to the inner invocation | Empty token stream |
+///
+/// # Examples
+///
+/// ```
+/// # use these_macros_should_be_illegal::reflect;
+/// macro_rules! add_one { ($value:expr) => { 1 + $value }; }
+/// macro_rules! double { ($value:expr) => { 2 * $value }; }
+/// assert_eq!(reflect!(add_one, double; 3), 8);
+/// ```
+#[proc_macro]
+pub fn reflect(input: TokenStream) -> TokenStream {
+    input::without_arguments(input.into(), meta::reflect::reflect).into()
 }
 
 // Remaining conveniences over ordinary Rust syntax.
 
-make_proc! {
-    /// Qualifies common unqualified standard-library types inside one Rust type.
-    ///
-    /// Nested common types are qualified recursively, while an already qualified
-    /// path is preserved deliberately.
-    ///
-    /// # Arguments
-    ///
-    /// Takes no separate parameters. An optional `@macro_args();` prefix is
-    /// accepted; a nonempty parameter list is rejected.
-    ///
-    /// | Argument | Accepted value | Default |
-    /// | --- | --- | --- |
-    /// | Body | Exactly one Rust type, including generics, lifetimes, pointers, arrays, tuples, and function types | Required |
-    ///
-    /// Recognized unqualified names are
-    /// `String`, `Box`, `Vec`, `HashMap`, `HashSet`, `BTreeMap`, `BTreeSet`, `Option`,
-    /// and `Arc`. Their nested type arguments are visited recursively. There are no
-    /// configuration defaults.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use these_macros_should_be_illegal::qf;
-    /// let value: qf!(Option<Vec<String>>) = Some(vec![String::from("less punctuation")]);
-    /// assert!(value.is_some());
-    /// ```
-    qf => no_arguments qol::qf::qf
+/// Qualifies common unqualified standard-library types inside one Rust type.
+///
+/// Nested common types are qualified recursively, while an already qualified
+/// path is preserved deliberately.
+///
+/// # Arguments
+///
+/// Takes no separate parameters. An optional `@macro_args();` prefix is
+/// accepted; a nonempty parameter list is rejected.
+///
+/// | Argument | Accepted value | Default |
+/// | --- | --- | --- |
+/// | Body | Exactly one Rust type, including generics, lifetimes, pointers, arrays, tuples, and function types | Required |
+///
+/// Recognized unqualified names are
+/// `String`, `Box`, `Vec`, `HashMap`, `HashSet`, `BTreeMap`, `BTreeSet`, `Option`,
+/// and `Arc`. Their nested type arguments are visited recursively. There are no
+/// configuration defaults.
+///
+/// # Examples
+///
+/// ```
+/// # use these_macros_should_be_illegal::qf;
+/// let value: qf!(Option<Vec<String>>) = Some(vec![String::from("less punctuation")]);
+/// assert!(value.is_some());
+/// ```
+#[proc_macro]
+pub fn qf(input: TokenStream) -> TokenStream {
+    input::without_arguments(input.into(), qol::qf::qf).into()
 }
 
-make_proc! {
-    /// Spells one name in a conventional case, or one type canonically, as a string literal.
-    ///
-    /// The option before `;` selects the spelling: `camel`, `pascal`, `snake`, `kebab`,
-    /// `screaming_snake`, `lower` or `upper` convert an identifier or string literal,
-    /// respecting acronym boundaries; `lower` and `upper` retain existing separators.
-    /// `type` produces a canonical, collision-safe name for one Rust type: it begins
-    /// with `type:`, which is deliberately illegal in Rust identifiers, and drops
-    /// formatting while preserving structure, so `& 'a mut Vec < Option < T > >`
-    /// becomes `"type:&'a mut Vec<Option<T>>"`.
-    ///
-    /// # Arguments
-    ///
-    /// Write `stringify_as!(spelling; body)` or
-    /// `stringify_as!(@macro_args(spelling); body)`.
-    ///
-    /// | Argument | Accepted value | Default |
-    /// | --- | --- | --- |
-    /// | `spelling` | One option from the table below | Required |
-    /// | `body` | Identifier or nonempty string literal for case options; one Rust type for `type` | Required |
-    ///
-    /// | Option | Result | Body |
-    /// | --- | --- | --- |
-    /// | `camel` | `lowerCamelCase` | Identifier or nonempty string literal |
-    /// | `pascal` | `UpperCamelCase` | Identifier or nonempty string literal |
-    /// | `snake` | `snake_case` | Identifier or nonempty string literal |
-    /// | `kebab` | `kebab-case` | Identifier or nonempty string literal |
-    /// | `screaming_snake` | `SCREAMING_SNAKE_CASE` | Identifier or nonempty string literal |
-    /// | `lower` | Unicode lowercase, preserving separators | Identifier or nonempty string literal |
-    /// | `upper` | Unicode uppercase, preserving separators | Identifier or nonempty string literal |
-    /// | `type` | Compact canonical spelling prefixed with `type:` | One Rust type |
-    ///
-    /// Exactly one spelling option is required, without a trailing comma. Raw
-    /// identifiers contribute their name without `r#`. Macro calls standing for a
-    /// name are rejected because the macro must inspect the name before expansion.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use these_macros_should_be_illegal::stringify_as;
-    /// assert_eq!(stringify_as!(camel; some_HTTP_server), "someHttpServer");
-    /// assert_eq!(stringify_as!(screaming_snake; SomeHTTPServer), "SOME_HTTP_SERVER");
-    /// assert_eq!(
-    ///     stringify_as!(type; fn((u8, u16), *const [u8; 4]) -> bool),
-    ///     "type:fn((u8,u16),*const[u8;4])->bool",
-    /// );
-    /// ```
-    stringify_as
+/// Spells one name in a conventional case, or one type canonically, as a string literal.
+///
+/// The option before `;` selects the spelling: `camel`, `pascal`, `snake`, `kebab`,
+/// `screaming_snake`, `lower` or `upper` convert an identifier or string literal,
+/// respecting acronym boundaries; `lower` and `upper` retain existing separators.
+/// `type` produces a canonical, collision-safe name for one Rust type: it begins
+/// with `type:`, which is deliberately illegal in Rust identifiers, and drops
+/// formatting while preserving structure, so `& 'a mut Vec < Option < T > >`
+/// becomes `"type:&'a mut Vec<Option<T>>"`.
+///
+/// # Arguments
+///
+/// Write `stringify_as!(spelling; body)` or
+/// `stringify_as!(@macro_args(spelling); body)`.
+///
+/// | Argument | Accepted value | Default |
+/// | --- | --- | --- |
+/// | `spelling` | One option from the table below | Required |
+/// | `body` | Identifier or nonempty string literal for case options; one Rust type for `type` | Required |
+///
+/// | Option | Result | Body |
+/// | --- | --- | --- |
+/// | `camel` | `lowerCamelCase` | Identifier or nonempty string literal |
+/// | `pascal` | `UpperCamelCase` | Identifier or nonempty string literal |
+/// | `snake` | `snake_case` | Identifier or nonempty string literal |
+/// | `kebab` | `kebab-case` | Identifier or nonempty string literal |
+/// | `screaming_snake` | `SCREAMING_SNAKE_CASE` | Identifier or nonempty string literal |
+/// | `lower` | Unicode lowercase, preserving separators | Identifier or nonempty string literal |
+/// | `upper` | Unicode uppercase, preserving separators | Identifier or nonempty string literal |
+/// | `type` | Compact canonical spelling prefixed with `type:` | One Rust type |
+///
+/// Exactly one spelling option is required, without a trailing comma. Raw
+/// identifiers contribute their name without `r#`. Macro calls standing for a
+/// name are rejected because the macro must inspect the name before expansion.
+///
+/// # Examples
+///
+/// ```
+/// # use these_macros_should_be_illegal::stringify_as;
+/// assert_eq!(stringify_as!(camel; some_HTTP_server), "someHttpServer");
+/// assert_eq!(stringify_as!(screaming_snake; SomeHTTPServer), "SOME_HTTP_SERVER");
+/// assert_eq!(
+///     stringify_as!(type; fn((u8, u16), *const [u8; 4]) -> bool),
+///     "type:fn((u8,u16),*const[u8;4])->bool",
+/// );
+/// ```
+#[proc_macro]
+pub fn stringify_as(input: TokenStream) -> TokenStream {
+    stringify_as::stringify_as(input.into()).into()
 }
 
 /// Generates a constant cyclic successor method for a unit enum.

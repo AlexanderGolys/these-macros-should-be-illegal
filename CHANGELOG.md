@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.14.1 - 2026-11-13
+
+### Changed
+
+- Procedural macro entry points are explicit functions so editor highlighters
+  can recognize Rust examples in their documentation. Macro behavior and
+  public signatures are unchanged.
+
 ## 0.14.0 - 2026-11-13
 
 ### Added
