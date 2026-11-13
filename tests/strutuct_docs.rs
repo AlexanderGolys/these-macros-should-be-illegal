@@ -2,7 +2,7 @@
 
 #![deny(missing_docs)]
 
-use these_macros_should_be_illegal::{macro_args, strutuct};
+use these_macros_should_be_illegal::strutuct;
 
 strutuct! {
     /// A declaration documented by its caller.
@@ -12,8 +12,8 @@ strutuct! {
     }
 }
 
-#[macro_args(pub, undoc, inc)]
 strutuct! {
+    @macro_args(pub, undoc, inc);
     Undocumented {
         Unit,
         Tuple(u8, u16),

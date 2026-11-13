@@ -88,7 +88,25 @@ use syn::{
     spanned::Spanned,
     visit_mut::{self, VisitMut},
 };
+/// Generates an enum method whose body is a match over its variants.
+///
+/// Parse failures of either the arguments or the item are returned as a
+/// `compile_error!` invocation instead of the expansion, so the attribute
+/// rejects anything but an enum:
+///
+/// ```rust,ignore
+/// // error: expected `enum`
+/// #[enum_fn(code -> u8)]
+/// struct Status(u8);
+/// ```
+#[must_use]
+pub fn enum_fn(arguments: TokenStream, item: TokenStream) -> TokenStream {
+    let result = parse2::<Arguments>(arguments)
+        .and_then(|arguments| parse2::<ItemEnum>(item).map(|item| (arguments, item)))
+        .and_then(|(arguments, item)| expand(arguments, item));
 
+    result.unwrap_or_else(Error::into_compile_error)
+}
 /// Arguments of one `#[enum_fn(...)]` attribute: the generated method's
 /// signature followed by optional comma-separated options.
 ///
@@ -124,17 +142,11 @@ use syn::{
 /// assert_eq!(Planet::Unnamed.name(), None);
 /// ```
 struct Arguments {
-    /// Attributes placed before the generated method signature.
     method_attributes: Vec<Attribute>,
-    /// Visibility of the generated method.
     method_visibility: Visibility,
-    /// Whether the generated method is explicitly const.
-    is_const: bool,
-    /// Name of the accessor method generated on the enum.
+    is_const: Option<Token![const]>,
     method_name: Ident,
-    /// Exact return type declared for the generated method.
-    return_type: Type,
-    /// Expression of the wildcard arm reached by variants without a right-hand side.
+    return_type: Box<Type>,
     missing: Expr,
 }
 
@@ -165,10 +177,7 @@ impl Parse for Arguments {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let method_attributes = Attribute::parse_outer(input)?;
         let visibility = input.parse()?;
-        let is_const = input.peek(Token![const]);
-        if is_const {
-            input.parse::<Token![const]>()?;
-        }
+        let is_const = input.parse()?;
         let method = input.parse()?;
         input.parse::<Token![->]>()?;
         let output = input.parse()?;
@@ -231,26 +240,6 @@ enum VariantOutput {
     Expression(Box<Expr>),
     /// Invoke a closure with a borrow of every field, in declaration order.
     Call(Box<ExprClosure>),
-}
-
-/// Generates an enum method whose body is a match over its variants.
-///
-/// Parse failures of either the arguments or the item are returned as a
-/// `compile_error!` invocation instead of the expansion, so the attribute
-/// rejects anything but an enum:
-///
-/// ```rust,ignore
-/// // error: expected `enum`
-/// #[enum_fn(code -> u8)]
-/// struct Status(u8);
-/// ```
-#[must_use]
-pub fn enum_fn(arguments: TokenStream, item: TokenStream) -> TokenStream {
-    let result = parse2::<Arguments>(arguments)
-        .and_then(|arguments| parse2::<ItemEnum>(item).map(|item| (arguments, item)))
-        .and_then(|(arguments, item)| expand(arguments, item));
-
-    result.unwrap_or_else(Error::into_compile_error)
 }
 
 /// Removes method-arm expressions and emits the accessor implementation.
@@ -324,13 +313,13 @@ fn expand(arguments: Arguments, mut item: ItemEnum) -> syn::Result<TokenStream> 
 
     let ident = &item.ident;
     let (impl_generics, type_generics, where_clause) = item.generics.split_for_impl();
-    if is_const && has_lambda {
+    if is_const.is_some() && has_lambda {
         return Err(Error::new_spanned(
             &method,
             "`const enum_fn` cannot use lambda expressions",
         ));
     }
-    let constness = is_const.then(|| quote!(const));
+    let constness = is_const.is_some().then(|| quote!(const));
     let (return_type, method_lifetime, receiver_lifetime, borrow) = if has_lambda {
         let written_names = fresh_name::written_identifiers(quote!(#item #output));
         let borrow_name = fresh_name::fresh_name("__enum_fn_borrow", &written_names);
@@ -980,5 +969,111 @@ mod tests {
         assert!(const_public.contains("pub (crate) const fn value"));
         assert!(constant.contains("const fn value"));
         assert!(private.contains("] fn value"));
+    }
+}
+
+/// Generates a constant successor method using the enum accessor machinery.
+pub fn enum_cycle(arguments: TokenStream, item: TokenStream) -> TokenStream {
+    let result = (|| -> syn::Result<TokenStream> {
+        let original = parse2::<ItemEnum>(item)?;
+        let mut mapped = original.clone();
+        for (index, variant) in mapped.variants.iter_mut().enumerate() {
+            if !matches!(variant.fields, Fields::Unit) {
+                return Err(Error::new_spanned(
+                    &variant.fields,
+                    "enum_cycle requires unit variants",
+                ));
+            }
+            let successors = original
+                .variants
+                .iter()
+                .cycle()
+                .skip(index + 1)
+                .take(original.variants.len())
+                .map(|candidate| {
+                    let attributes = conditional_attrs(&candidate.attrs);
+                    let name = &candidate.ident;
+                    quote!(#(#attributes)* { return Self::#name; })
+                });
+            variant.discriminant = Some((
+                Default::default(),
+                syn::parse_quote!({
+                    #[allow(unreachable_code)]
+                    { #(#successors)* ::core::panic!("no enabled successor") }
+                }),
+            ));
+        }
+        let arguments = parse2::<CycleArguments>(arguments)?;
+        let CycleArguments {
+            attributes,
+            visibility,
+            name,
+        } = arguments;
+        let expanded = enum_fn(
+            quote!(#(#attributes)* #visibility const #name -> Self),
+            quote!(#mapped),
+        );
+        let mut file = parse2::<syn::File>(expanded)?;
+        file.items[0] = syn::Item::Enum(original);
+        Ok(quote!(#file))
+    })();
+    result.unwrap_or_else(Error::into_compile_error)
+}
+
+struct CycleArguments {
+    attributes: Vec<Attribute>,
+    visibility: Visibility,
+    name: Ident,
+}
+
+impl Parse for CycleArguments {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let arguments = Self {
+            attributes: input.call(Attribute::parse_outer)?,
+            visibility: input.parse()?,
+            name: input.parse()?,
+        };
+        if input.peek(Token![,]) {
+            input.parse::<Token![,]>()?;
+        }
+        Ok(arguments)
+    }
+}
+
+#[cfg(test)]
+mod cycle_tests {
+    use super::enum_cycle;
+    use quote::quote;
+
+    #[test]
+    fn rejects_payload_variants() {
+        for item in [
+            quote!(
+                enum Invalid {
+                    Tuple(u8),
+                }
+            ),
+            quote!(
+                enum Invalid {
+                    Named { value: u8 },
+                }
+            ),
+            quote!(
+                enum Invalid {
+                    EmptyTuple(),
+                }
+            ),
+            quote!(
+                enum Invalid {
+                    EmptyStruct {},
+                }
+            ),
+        ] {
+            let output = enum_cycle(quote!(next), item).to_string();
+            assert!(
+                output.contains("enum_cycle requires unit variants"),
+                "{output}"
+            );
+        }
     }
 }

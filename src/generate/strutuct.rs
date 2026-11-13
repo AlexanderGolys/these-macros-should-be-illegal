@@ -215,7 +215,7 @@ pub fn strutuct(input: TokenStream) -> TokenStream {
 ///
 /// Every field corresponds to one `#[strutuct(...)]` entry; the defaults equal
 ///
-/// ```
+/// ```rust,ignore
 /// #[strutuct(no_inclusions, no_product_variants, priv, no_reverse_concat)]
 /// ```
 #[derive(Clone)]

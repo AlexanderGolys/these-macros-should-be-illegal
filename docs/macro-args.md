@@ -1,31 +1,12 @@
-# `macro_args`
+# Macro parameters
 
-`#[macro_args(...)]` gives an item-position function-like macro a separate
-parameter list:
-
-```rust
-# #[macro_use] extern crate these_macros_should_be_illegal;
-use these_macros_should_be_illegal::{macro_args, strutuct};
-
-#[macro_args(product_variants)]
-strutuct! { Message Pair(u8, u8) }
-# fn main() {}
-```
-
-The attribute inserts a tagged prefix inside the invocation:
+Function-like macros accept an inline `@macro_args(...);` prefix before
+their body. Parameters are ordinary unexpanded tokens.
 
 ```rust
-# #[macro_use] extern crate these_macros_should_be_illegal;
-strutuct! {
-    @macro_args(product_variants);
-    Message Pair(u8, u8)
-}
+use these_macros_should_be_illegal::strutuct;
+strutuct! { @macro_args(product_variants); Message Pair(u8, u8) }
 ```
-
-Each receiving macro reads that prefix before parsing its body. The attribute
-preserves the invocation's path, delimiters, remaining attributes, and body
-tokens. It also works with other macros that implement this prefix convention.
-The parameters are ordinary unexpanded macro input.
 
 | Macro | Parameters |
 | --- | --- |
@@ -57,16 +38,5 @@ including existing inline option forms. A full name and its alias refer to
 one option; repeating either spelling in the same argument list is an error.
 
 
-Rust restricts the attribute to item-position invocations. Write the prefix
-directly in expression and type positions:
-
-```rust
-# #[macro_use] extern crate these_macros_should_be_illegal;
-use these_macros_should_be_illegal::stringify_as;
-
-assert_eq!(stringify_as!(@macro_args(snake); SomeName), "some_name");
-```
-
-When combining with `#[forward_attributes]`, place `#[macro_args(...)]` above
-it. The parameter prefix stays first, followed by forwarded attributes and the
-body.
+The prefix works in item, expression, and type positions where the receiving
+macro is supported.

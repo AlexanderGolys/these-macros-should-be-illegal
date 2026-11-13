@@ -6,7 +6,7 @@ use proc_macro2::{Delimiter, Group, Spacing, TokenStream, TokenTree};
 use syn::{ItemMacro, parse2};
 
 use Delimiter::Bracket;
-use TokenTree::{Group as GroupTT, Ident as IdentTT, Punct as PunctTT};
+use TokenTree::Punct as PunctTT;
 
 /// Provides serialization and recursive traversal operations.
 impl ExpansionConfig {
@@ -33,7 +33,9 @@ impl ExpansionConfig {
             }
 
             match tokens[index].clone() {
-                GroupTT(group) => output.extend([GroupTT(self.rewrite_group(group, transform))]),
+                TokenTree::Group(group) => {
+                    output.extend([TokenTree::Group(self.rewrite_group(group, transform))])
+                }
                 token => output.extend([token]),
             }
             index += 1;
@@ -59,8 +61,10 @@ impl ExpansionConfig {
             }
 
             match tokens[index].clone() {
-                GroupTT(group) => {
-                    prepared.extend([GroupTT(self.rewrite_bottom_up_group(group, transform))]);
+                TokenTree::Group(group) => {
+                    prepared.extend([TokenTree::Group(
+                        self.rewrite_bottom_up_group(group, transform),
+                    )]);
                 }
                 token => prepared.extend([token]),
             }
@@ -92,22 +96,23 @@ impl ExpansionConfig {
             return Some(length);
         }
         if matches!(tokens.first(), Some(token) if is_punctuation(token, '#')) {
-            if matches!(tokens.get(1), Some(GroupTT(group)) if group.delimiter() == Bracket) {
+            if matches!(tokens.get(1), Some(TokenTree::Group(group)) if group.delimiter() == Bracket)
+            {
                 return Some(2);
             }
 
             if matches!(tokens.get(1), Some(token) if is_punctuation(token, '!'))
-                && matches!(tokens.get(2), Some(GroupTT(group)) if group.delimiter() == Bracket)
+                && matches!(tokens.get(2), Some(TokenTree::Group(group)) if group.delimiter() == Bracket)
             {
                 return Some(3);
             }
         }
 
-        if let Some(IdentTT(identifier)) = tokens.first()
+        if let Some(TokenTree::Ident(identifier)) = tokens.first()
             && self.is_excluded(identifier)
             && matches!(tokens.get(1), Some(token) if is_punctuation(token, '!'))
         {
-            if matches!(tokens.get(2), Some(GroupTT(_))) {
+            if matches!(tokens.get(2), Some(TokenTree::Group(_))) {
                 return Some(3);
             }
             if identifier == "macro_rules" {
@@ -154,7 +159,7 @@ pub(crate) fn is_joint_punctuation(token: &TokenTree, expected: char) -> bool {
 
 /// Finds the complete length of a declarative macro definition at the token prefix.
 fn declarative_macro_prefix_length(tokens: &[TokenTree]) -> Option<usize> {
-    let GroupTT(body) = tokens.get(3)? else {
+    let TokenTree::Group(body) = tokens.get(3)? else {
         return None;
     };
     let length = match body.delimiter() {

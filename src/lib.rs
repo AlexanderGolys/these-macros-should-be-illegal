@@ -26,8 +26,7 @@
 //! Macro configuration uses one argument grammar per macro family. Every macro
 //! documents its grammar and defaults in its **Arguments** section. Attribute
 //! macros take arguments directly in `#[name(...)]`; function-like macros accept
-//! the tagged `@macro_args(...);` prefix, which [`macro_args`](macro@macro_args) can insert at item
-//! position. Existing inline forms remain available. Parameters are unexpanded
+//! the tagged `@macro_args(...);` prefix, at the start of the invocation. Existing inline forms remain available. Parameters are unexpanded
 //! tokens: a macro call can supply a value only where the receiving macro emits
 //! that expression unchanged, rather than inspecting its name or literal value.
 
@@ -52,7 +51,6 @@ mod helpers {
 mod meta {
     pub(crate) mod expand;
     pub(crate) mod forward_attributes;
-    pub(crate) mod macro_args;
     pub(crate) mod make_fn;
     pub(crate) mod perm;
     pub(crate) mod reflect;
@@ -214,42 +212,42 @@ make_attr! {
     complete_ops
 }
 
-make_attr! {
-    /// Assigns every enum variant one unique string literal.
-    ///
-    /// The named method maps a value to its literal, and a same-name macro maps a
-    /// literal and payload back to the variant constructor.
-    ///
-    /// # Arguments
-    ///
-    /// Write `#[discriminated_str(method)]` directly on an enum.
-    ///
-    /// | Argument | Accepted value | Default |
-    /// | --- | --- | --- |
-    /// | `method` | Identifier naming the generated public string accessor | Required |
-    ///
-    /// One trailing comma is accepted. Variant string literals and payload fields
-    /// belong to the enum input, rather than the attribute argument list.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use these_macros_should_be_illegal::discriminated_str;
-    ///
-    /// #[discriminated_str(name)]
-    /// enum Token {
-    ///     Ident(String) = "ident",
-    ///     End = "end",
-    /// }
-    ///
-    /// fn main() {
-    ///     let token = Token!("ident", String::from("value"));
-    ///     assert_eq!(token.name(), "ident");
-    ///     assert!(matches!(Token!("end"), Token::End));
-    /// }
-    /// ```
-    #[doc(alias = "disctr")]
-    discriminated_str
+/// Assigns every enum variant one unique string literal.
+///
+/// The named method maps a value to its literal, and a same-name macro maps a
+/// literal and payload back to the variant constructor.
+///
+/// # Arguments
+///
+/// Write `#[discriminated_str(method)]` directly on an enum.
+///
+/// | Argument | Accepted value | Default |
+/// | --- | --- | --- |
+/// | `method` | Identifier naming the generated public string accessor | Required |
+///
+/// One trailing comma is accepted. Variant string literals and payload fields
+/// belong to the enum input, rather than the attribute argument list.
+///
+/// # Examples
+///
+/// ```
+/// # use these_macros_should_be_illegal::discriminated_str;
+/// # fn main() {
+///
+/// #[discriminated_str(name)]
+/// enum Token {
+///     Ident(String) = "ident",
+///     End = "end",
+/// }
+///
+/// let token = Token!("ident", String::from("value"));
+///     assert_eq!(token.name(), "ident");
+///     assert!(matches!(Token!("end"), Token::End));
+/// # }
+/// ```
+#[proc_macro_attribute]
+pub fn discriminated_str(arguments: TokenStream, item: TokenStream) -> TokenStream {
+    discriminated_str::discriminated_str(arguments.into(), item.into()).into()
 }
 
 make_attr! {
@@ -272,200 +270,200 @@ make_attr! {
     disctr => discriminated_str::discriminated_str
 }
 
-make_attr! {
-    /// Generates an enum method from per-variant expressions written beside the variants.
-    ///
-    /// Write `#[enum_fn(const name -> Type, missing = expression)]` on an enum.
-    /// The method borrows `&self`, returns exactly the written type, and is
-    /// runtime-callable by default. Add `const` after visibility to request a
-    /// `const fn`.
-    ///
-    /// # Arguments
-    ///
-    /// | Argument | Accepted value | Default |
-    /// | --- | --- | --- |
-    /// | `name` | Generated method's identifier | Required |
-    /// | `Type` | Exact Rust return type after `->` | Required |
-    /// | `missing` | Expression used by the wildcard arm | `::core::panic!()` |
-    ///
-    /// The method is private unless a Rust visibility precedes its name, such as
-    /// `pub(crate) const name -> Type`. One trailing comma is accepted.
-    /// Attributes written before the signature inside the arguments apply to
-    /// the generated method. For example,
-    /// `#[enum_fn(#[doc = "Returns the code."] const code -> u8)]` documents it.
-    /// Without a method doc attribute, only the generated method receives
-    /// `#[allow(missing_docs)]`; documentation on the enum stays on the enum.
-    ///
-    /// Each variant's RHS may be any Rust expression or a lambda. Lambda
-    /// arguments borrow one field each; their count must equal the field count.
-    /// Named fields require parameters with the same names in declaration order;
-    /// tuple parameters choose their names. Unit variants and empty products
-    /// take zero-argument lambdas. A `const` method cannot use lambdas, and Rust
-    /// checks that its expressions and fallback are const-compatible. There is
-    /// no implicit conversion, cloning, `Option`, or `Some` wrapping.
-    /// Fixed-result methods preserve elided return references such as `&str`.
-    /// Lambda methods use an explicit generated borrow lifetime so a result can
-    /// borrow from the variant's fields.
-    ///
-    /// Variants without values reach `_ => missing`. This wildcard is always
-    /// emitted, so `non_exhaustive` works in either attribute order. Conditional
-    /// compilation is preserved on generated code.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use these_macros_should_be_illegal::enum_fn;
-    /// #[enum_fn(const code -> u8)]
-    /// enum Status {
-    ///     Ready = 1,
-    ///     Dynamic(String) = 0,
-    /// }
-    /// const READY: u8 = Status::Ready.code();
-    /// assert_eq!(READY, 1);
-    /// assert_eq!(Status::Dynamic(String::new()).code(), 0);
-    /// ```
-    ///
-    /// Optional results are explicit in both the type and values:
-    ///
-    /// ```
-    /// # use these_macros_should_be_illegal::enum_fn;
-    /// #[enum_fn(description -> Option<&str>, missing = None)]
-    /// enum Message {
-    ///     Fixed = Some("fixed"),
-    ///     Named { text: String } = |text| Some(text.as_str()),
-    ///     Missing,
-    /// }
-    /// assert_eq!(Message::Fixed.description(), Some("fixed"));
-    /// assert_eq!(Message::Named { text: "hello".into() }.description(), Some("hello"));
-    /// assert_eq!(Message::Missing.description(), None);
-    /// ```
-    ///
-    /// Named-field parameters cannot rename their fields:
-    ///
-    /// ```compile_fail
-    /// # use these_macros_should_be_illegal::enum_fn;
-    /// #[enum_fn(code -> u8)]
-    /// enum Value { Named { code: u8 } = |c| *c }
-    /// ```
-    ///
-    /// Tuple fields require one parameter each:
-    ///
-    /// ```compile_fail
-    /// # use these_macros_should_be_illegal::enum_fn;
-    /// #[enum_fn(code -> u8)]
-    /// enum Value { Pair(u8, u8) = |pair| pair.0 + pair.1 }
-    /// ```
-    ///
-    /// Fixed results can call runtime functions without a lambda:
-    ///
-    /// ```
-    /// # use these_macros_should_be_illegal::enum_fn;
-    /// fn label(value: u8) -> String { value.to_string() }
-    /// #[enum_fn(label -> String)]
-    /// enum Value { Fixed = label(2) }
-    /// assert_eq!(Value::Fixed.label(), "2");
-    /// ```
-
-    enum_fn
+/// Generates an enum method from per-variant expressions written beside the variants.
+///
+/// Write `#[enum_fn(const name -> Type, missing = expression)]` on an enum.
+/// The method borrows `&self`, returns exactly the written type, and is
+/// runtime-callable by default. Add `const` after visibility to request a
+/// `const fn`.
+///
+/// # Arguments
+///
+/// | Argument | Accepted value | Default |
+/// | --- | --- | --- |
+/// | `name` | Generated method's identifier | Required |
+/// | `Type` | Exact Rust return type after `->` | Required |
+/// | `missing` | Expression used by the wildcard arm | `::core::panic!()` |
+///
+/// The method is private unless a Rust visibility precedes its name, such as
+/// `pub(crate) const name -> Type`. One trailing comma is accepted.
+/// Attributes written before the signature inside the arguments apply to
+/// the generated method. For example,
+/// `#[enum_fn(#[doc = "Returns the code."] const code -> u8)]` documents it.
+/// Without a method doc attribute, only the generated method receives
+/// `#[allow(missing_docs)]`; documentation on the enum stays on the enum.
+///
+/// Each variant's RHS may be any Rust expression or a lambda. Lambda
+/// arguments borrow one field each; their count must equal the field count.
+/// Named fields require parameters with the same names in declaration order;
+/// tuple parameters choose their names. Unit variants and empty products
+/// take zero-argument lambdas. A `const` method cannot use lambdas, and Rust
+/// checks that its expressions and fallback are const-compatible. There is
+/// no implicit conversion, cloning, `Option`, or `Some` wrapping.
+/// Fixed-result methods preserve elided return references such as `&str`.
+/// Lambda methods use an explicit generated borrow lifetime so a result can
+/// borrow from the variant's fields.
+///
+/// Variants without values reach `_ => missing`. This wildcard is always
+/// emitted, so `non_exhaustive` works in either attribute order. Conditional
+/// compilation is preserved on generated code.
+///
+/// # Examples
+///
+/// ```
+/// # use these_macros_should_be_illegal::enum_fn;
+/// #[enum_fn(const code -> u8)]
+/// enum Status {
+///     Ready = 1,
+///     Dynamic(String) = 0,
+/// }
+/// const READY: u8 = Status::Ready.code();
+/// assert_eq!(READY, 1);
+/// assert_eq!(Status::Dynamic(String::new()).code(), 0);
+/// ```
+///
+/// Optional results are explicit in both the type and values:
+///
+/// ```
+/// # use these_macros_should_be_illegal::enum_fn;
+/// #[enum_fn(description -> Option<&str>, missing = None)]
+/// enum Message {
+///     Fixed = Some("fixed"),
+///     Named { text: String } = |text| Some(text.as_str()),
+///     Missing,
+/// }
+/// assert_eq!(Message::Fixed.description(), Some("fixed"));
+/// assert_eq!(Message::Named { text: "hello".into() }.description(), Some("hello"));
+/// assert_eq!(Message::Missing.description(), None);
+/// ```
+///
+/// Named-field parameters cannot rename their fields:
+///
+/// ```compile_fail
+/// # use these_macros_should_be_illegal::enum_fn;
+/// #[enum_fn(code -> u8)]
+/// enum Value { Named { code: u8 } = |c| *c }
+/// ```
+///
+/// Tuple fields require one parameter each:
+///
+/// ```compile_fail
+/// # use these_macros_should_be_illegal::enum_fn;
+/// #[enum_fn(code -> u8)]
+/// enum Value { Pair(u8, u8) = |pair| pair.0 + pair.1 }
+/// ```
+///
+/// Fixed results can call runtime functions without a lambda:
+///
+/// ```
+/// # use these_macros_should_be_illegal::enum_fn;
+/// fn label(value: u8) -> String { value.to_string() }
+/// #[enum_fn(label -> String)]
+/// enum Value { Fixed = label(2) }
+/// assert_eq!(Value::Fixed.label(), "2");
+/// ```
+#[proc_macro_attribute]
+pub fn enum_fn(arguments: TokenStream, item: TokenStream) -> TokenStream {
+    enum_fn::enum_fn(arguments.into(), item.into()).into()
 }
 
-make_attr! {
-    /// Distributes constant outer attributes, visibility or types over all fields or variants.
-    ///
-    /// The arguments are written like the beginning of one member declaration,
-    /// `#[attribute] pub Type`, and are repeated on every member of the annotated
-    /// item: on each field of a struct or union, and on each variant of an enum.
-    /// Each part of the prefix is recognized by the syntax that only it has, so
-    /// the parts may be written in any order. Shared attributes are added in front
-    /// of the ones a member already carries, and a member keeps its own visibility
-    /// where it declares one.
-    ///
-    /// Every item kind takes the part of the prefix its members accept:
-    ///
-    /// - a braced struct and a union take attributes and one visibility, since
-    ///   their fields already name the type they hold;
-    /// - a tuple struct takes attributes, one visibility and one shared type, and
-    ///   then its fields are written as bare names: `struct S(a, b)` becomes a
-    ///   braced struct whose fields `a` and `b` hold that type;
-    /// - an enum takes attributes and either any number of types, appended to its
-    ///   variants as unnamed fields, or one braced group `{ name: Type, ... }` of
-    ///   named fields added to its variants; a variant takes no visibility.
-    ///
-    /// A named field created from the prefix is documented where the declaration
-    /// documents none, which keeps the generated braced struct usable under
-    /// `#![deny(missing_docs)]`.
-    ///
-    /// A member keeps out of the prefix with an inert `#[tmsbi(skip)]` marker,
-    /// which skips every fragment, or `#[tmsbi(skip(fragments))]`, whose
-    /// fragments are written like a prefix and skip the identical distributed
-    /// ones. An attribute written as a bare path, like `#[doc]`, skips every
-    /// distributed attribute of that path, and a group of named fields skips the
-    /// shared fields by their names. Each stacked `forall` reads the same markers
-    /// and the last one removes them, so a fragment no prefix distributes is
-    /// ignored. A field named from its tuple position cannot skip the shared type.
-    /// The marker lives under `tmsbi`, the namespace of this crate, and `forall`
-    /// claims only the `tmsbi` markers opening with `skip`.
-    ///
-    /// A prefix forwarded by a declarative macro is read like one written
-    /// directly: `#[forall($(#[$attribute])* $visibility $shared)]` takes its
-    /// parts from `meta`, `vis` and `ty` fragments, including a `vis` fragment
-    /// that matched nothing, and a field name may be forwarded as a `ty` fragment.
-    ///
-    /// # Arguments
-    ///
-    /// Write `#[forall(attributes visibility types)]` directly on a struct, union,
-    /// or enum. The parts may appear in any order, with optional commas.
-    ///
-    /// | Argument | Accepted value | Default |
-    /// | --- | --- | --- |
-    /// | `attributes` | Any number of outer `#[...]` attributes | No shared attributes |
-    /// | `visibility` | One Rust visibility | Preserve each member's visibility |
-    /// | `types` | Rust types, or one `{ name: Type, ... }` field group | Preserve existing fields |
-    ///
-    /// Supply at least one part. Braced structs and unions accept shared attributes
-    /// and visibility. Tuple structs accept one shared type when their fields are
-    /// bare names. Enums accept multiple shared types or one nonempty named-field
-    /// group, and accept no visibility. Named and unnamed shared fields cannot be
-    /// mixed. Trailing commas are accepted.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use these_macros_should_be_illegal::forall;
-    ///
-    /// #[forall(pub(crate))]
-    /// pub struct Pixel(u8, u8, u8);
-    ///
-    /// #[forall(pub, f32)]
-    /// struct Point(x, y);
-    ///
-    /// #[forall(u16, String)]
-    /// enum Response { Redirect, Error }
-    ///
-    /// #[forall(#[doc = "One stage of the pipeline."])]
-    /// enum Stage { Parse, Lower }
-    ///
-    /// #[forall(u16, String)]
-    /// enum Reply {
-    ///     Moved,
-    ///     #[tmsbi(skip(String))]
-    ///     Empty,
-    ///     #[tmsbi(skip)]
-    ///     Unknown,
-    /// }
-    ///
-    /// let point = Point { x: 0.25, y: 0.75 };
-    /// let response = Response::Error(404, String::from("missing"));
-    ///
-    /// assert_eq!(point.x + point.y, 1.0);
-    /// assert!(matches!(response, Response::Error(404, _)));
-    /// assert!(matches!(Stage::Lower, Stage::Lower));
-    /// assert!(matches!(Reply::Empty(204), Reply::Empty(204)));
-    /// assert!(matches!(Reply::Unknown, Reply::Unknown));
-    /// ```
-    forall
+/// Distributes constant outer attributes, visibility or types over all fields or variants.
+///
+/// The arguments are written like the beginning of one member declaration,
+/// `#[attribute] pub Type`, and are repeated on every member of the annotated
+/// item: on each field of a struct or union, and on each variant of an enum.
+/// Each part of the prefix is recognized by the syntax that only it has, so
+/// the parts may be written in any order. Shared attributes are added in front
+/// of the ones a member already carries, and a member keeps its own visibility
+/// where it declares one.
+///
+/// Every item kind takes the part of the prefix its members accept:
+///
+/// - a braced struct and a union take attributes and one visibility, since
+///   their fields already name the type they hold;
+/// - a tuple struct takes attributes, one visibility and one shared type, and
+///   then its fields are written as bare names: `struct S(a, b)` becomes a
+///   braced struct whose fields `a` and `b` hold that type;
+/// - an enum takes attributes and either any number of types, appended to its
+///   variants as unnamed fields, or one braced group `{ name: Type, ... }` of
+///   named fields added to its variants; a variant takes no visibility.
+///
+/// A named field created from the prefix is documented where the declaration
+/// documents none, which keeps the generated braced struct usable under
+/// `#![deny(missing_docs)]`.
+///
+/// A member keeps out of the prefix with an inert `#[tmsbi(skip)]` marker,
+/// which skips every fragment, or `#[tmsbi(skip(fragments))]`, whose
+/// fragments are written like a prefix and skip the identical distributed
+/// ones. An attribute written as a bare path, like `#[doc]`, skips every
+/// distributed attribute of that path, and a group of named fields skips the
+/// shared fields by their names. Each stacked `forall` reads the same markers
+/// and the last one removes them, so a fragment no prefix distributes is
+/// ignored. A field named from its tuple position cannot skip the shared type.
+/// The marker lives under `tmsbi`, the namespace of this crate, and `forall`
+/// claims only the `tmsbi` markers opening with `skip`.
+///
+/// A prefix forwarded by a declarative macro is read like one written
+/// directly: `#[forall($(#[$attribute])* $visibility $shared)]` takes its
+/// parts from `meta`, `vis` and `ty` fragments, including a `vis` fragment
+/// that matched nothing, and a field name may be forwarded as a `ty` fragment.
+///
+/// # Arguments
+///
+/// Write `#[forall(attributes visibility types)]` directly on a struct, union,
+/// or enum. The parts may appear in any order, with optional commas.
+///
+/// | Argument | Accepted value | Default |
+/// | --- | --- | --- |
+/// | `attributes` | Any number of outer `#[...]` attributes | No shared attributes |
+/// | `visibility` | One Rust visibility | Preserve each member's visibility |
+/// | `types` | Rust types, or one `{ name: Type, ... }` field group | Preserve existing fields |
+///
+/// Supply at least one part. Braced structs and unions accept shared attributes
+/// and visibility. Tuple structs accept one shared type when their fields are
+/// bare names. Enums accept multiple shared types or one nonempty named-field
+/// group, and accept no visibility. Named and unnamed shared fields cannot be
+/// mixed. Trailing commas are accepted.
+///
+/// # Examples
+///
+/// ```
+/// use these_macros_should_be_illegal::forall;
+///
+/// #[forall(pub(crate))]
+/// pub struct Pixel(u8, u8, u8);
+///
+/// #[forall(pub, f32)]
+/// struct Point(x, y);
+///
+/// #[forall(u16, String)]
+/// enum Response { Redirect, Error }
+///
+/// #[forall(#[doc = "One stage of the pipeline."])]
+/// enum Stage { Parse, Lower }
+///
+/// #[forall(u16, String)]
+/// enum Reply {
+///     Moved,
+///     #[tmsbi(skip(String))]
+///     Empty,
+///     #[tmsbi(skip)]
+///     Unknown,
+/// }
+///
+/// let point = Point { x: 0.25, y: 0.75 };
+/// let response = Response::Error(404, String::from("missing"));
+///
+/// assert_eq!(point.x + point.y, 1.0);
+/// assert!(matches!(response, Response::Error(404, _)));
+/// assert!(matches!(Stage::Lower, Stage::Lower));
+/// assert!(matches!(Reply::Empty(204), Reply::Empty(204)));
+/// assert!(matches!(Reply::Unknown, Reply::Unknown));
+/// ```
+#[proc_macro_attribute]
+pub fn forall(arguments: TokenStream, item: TokenStream) -> TokenStream {
+    forall::forall(arguments.into(), item.into()).into()
 }
-
 /// Generates the enum of the field names of a struct, and its indexing operator.
 ///
 /// A struct is a product over its field names: `S = ∏_{e ∈ E} X_e`, where `E` is
@@ -512,7 +510,7 @@ make_attr! {
 /// The helper may be omitted, bare (`#[log]`), or empty (`#[log()]`). A trailing
 /// comma after the name is accepted. Without an explicit `derive` attribute in
 /// the helper, the enum derives `Clone`, `Copy`, `PartialEq`, `Eq`, `Hash`, and
-/// `Debug`. These are helper arguments; no [`macro_args`](macro@macro_args) wrapper is involved.
+/// `Debug`. These are helper arguments; no wrapper is involved.
 ///
 /// # Examples
 ///
@@ -617,8 +615,7 @@ make_proc! {
     ///
     /// # Arguments
     ///
-    /// Supply root defaults through `#[macro_args(...)]` on an item-position
-    /// invocation, or through `strutuct! { @macro_args(...); declaration }`.
+    /// Supply root defaults through `strutuct! { @macro_args(...); declaration }`.
     /// The same grammar is accepted by local `#[strutuct(...)]` configuration.
     ///
     /// | Argument | Accepted value | Default |
@@ -660,9 +657,8 @@ make_proc! {
     /// ```rust
     /// #![deny(missing_docs)]
     /// //! A crate allowing one undocumented family.
-    /// use these_macros_should_be_illegal::{macro_args, strutuct};
-    /// #[macro_args(pub, undoc)]
-    /// strutuct! { Undocumented { pub child: Child { pub value: u8 } } }
+    /// use these_macros_should_be_illegal::strutuct;
+    /// strutuct! { @macro_args(pub, undoc); Undocumented { pub child: Child { pub value: u8 } } }
     /// fn main() {}
     /// ```
     ///
@@ -727,7 +723,7 @@ make_proc! {
     /// | `reverse_concat` / `no_reverse_concat` (`rev` / `no_rev`) | Bare flag | Disabled |
     /// | `allow_missing_docs` / `no_allow_missing_docs` (`undoc` / `no_undoc`) | Bare flag; allow undocumented declarations and members throughout this branch | Disabled |
     ///
-    /// Use `#[macro_args(...)]` or the direct `@macro_args(...);` prefix. Local
+    /// Use the direct `@macro_args(...);` prefix. Local
     /// configuration is spelled `#[strutuct(...)]`, including when the invocation is
     /// named `emmun!`. Precedence, comma rules, and body syntax match `strutuct!`.
     ///
@@ -751,8 +747,7 @@ make_proc! {
     ///
     /// # Arguments
     ///
-    /// Supply options through `#[macro_args(...)]` on an item-position invocation,
-    /// or write `literally_literal_string! { @macro_args(...); body }` directly.
+    /// Supply options directly: write `literally_literal_string! { @macro_args(...); body }` directly.
     ///
     /// | Argument | Accepted value | Default |
     /// | --- | --- | --- |
@@ -799,7 +794,7 @@ make_proc! {
     /// # Arguments
     ///
     /// Accepts `exclude_macros = (names)` (short name `exclude`), defaulting to an
-    /// empty list. Supply it through `#[macro_args(...)]`, `@macro_args(...);`,
+    /// empty list. Supply it through `@macro_args(...);`,
     /// or the inline `exclude_macros = (names);` form. The body is an arbitrary
     /// token stream, recursively rewritten with the same exclusions and comma
     /// rules as `literally_literal_string!`.
@@ -823,8 +818,7 @@ make_proc! {
     ///
     /// # Arguments
     ///
-    /// Supply options through `#[macro_args(...)]` on an item-position invocation,
-    /// or write `shared_match_arms! { @macro_args(...); body }` directly.
+    /// Supply options directly: write `shared_match_arms! { @macro_args(...); body }` directly.
     ///
     /// | Argument | Accepted value | Default |
     /// | --- | --- | --- |
@@ -865,7 +859,7 @@ make_proc! {
     /// # Arguments
     ///
     /// Accepts `exclude_macros = (names)` (short name `exclude`), defaulting to an
-    /// empty list. Supply it through `#[macro_args(...)]`, `@macro_args(...);`,
+    /// empty list. Supply it through `@macro_args(...);`,
     /// or the inline `exclude_macros = (names);` form. The body is an arbitrary
     /// token stream, recursively rewritten with the same exclusions, guards,
     /// and comma rules as `shared_match_arms!`.
@@ -879,57 +873,6 @@ make_proc! {
     sma => shared_match_arms::shared_match_arms
 }
 
-// Transformers of other macros and of the token streams passed to them.
-
-make_attr! {
-    /// Supplies separate parameters to an item-position function-like macro invocation.
-    ///
-    /// The attribute prepends `@macro_args(parameters);` inside the invocation,
-    /// preserving its path, delimiters, outer attributes and body tokens. The
-    /// receiving macro parses these parameters with its own argument grammar.
-    /// Repeated envelopes are rejected. Expression and type invocations can use the
-    /// same prefix directly, since Rust does not allow this attribute there.
-    ///
-    /// The syntax-rewriting macros accept `exclude_macros = (names)`,
-    /// [`strutuct!`](macro@strutuct) and [`emmun!`](macro@emmun) accept their root configuration
-    /// options, [`stringify_as!`](macro@stringify_as) accepts its spelling option, and
-    /// [`expand!`](macro@expand) accepts macro paths and shared preprocessing options.
-    /// Other function-like macros in this crate accept only empty parameters.
-    /// Existing inline argument forms remain supported.
-    /// Place this attribute above [`forward_attributes`](macro@forward_attributes) when combining them.
-    ///
-    /// # Arguments
-    ///
-    /// Write `#[macro_args(parameters)]` directly on an item-position function-like
-    /// macro invocation.
-    ///
-    /// | Argument | Accepted value | Default |
-    /// | --- | --- | --- |
-    /// | `parameters` | Opaque tokens in the receiving macro's documented argument grammar | Empty token stream |
-    ///
-    /// This attribute forwards the tokens unchanged; validation and defaults belong
-    /// to the receiving macro. It adds one `@macro_args(parameters);` prefix. A
-    /// receiver in this crate rejects repeated prefixes. Keep this attribute above
-    /// [`forward_attributes`](macro@forward_attributes) when combining them. For expression or type positions,
-    /// write the prefix directly inside the receiving invocation.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use these_macros_should_be_illegal::{macro_args, strutuct, stringify_as};
-    ///
-    /// #[macro_args(product_variants)]
-    /// strutuct! { Message Pair(u8, u8) }
-    ///
-    /// fn main() {
-    ///     let message = Message::Pair((1, 2));
-    ///     assert!(matches!(message, Message::Pair((1, 2))));
-    ///     assert_eq!(stringify_as!(@macro_args(snake); SomeName), "some_name");
-    /// }
-    /// ```
-    macro_args
-}
-
 make_proc! {
     /// Loads an out-of-line module and injects function-like macros around its body.
     ///
@@ -940,7 +883,7 @@ make_proc! {
     /// # Arguments
     ///
     /// Write `expand!(macros, options; module)`, or supply the same arguments via
-    /// `#[macro_args(macros, options)]` and leave only the module in the body.
+    /// `@macro_args(macros, options);` and leave only the module in the body.
     ///
     /// | Argument | Accepted value | Default |
     /// | --- | --- | --- |
@@ -1171,8 +1114,7 @@ make_proc! {
     /// # Arguments
     ///
     /// Write `stringify_as!(spelling; body)` or
-    /// `stringify_as!(@macro_args(spelling); body)`. An item-position invocation may
-    /// instead receive its spelling through `#[macro_args(spelling)]`.
+    /// `stringify_as!(@macro_args(spelling); body)`.
     ///
     /// | Argument | Accepted value | Default |
     /// | --- | --- | --- |
@@ -1206,4 +1148,26 @@ make_proc! {
     /// );
     /// ```
     stringify_as
+}
+
+/// Generates a constant cyclic successor method for a unit enum.
+///
+/// Arguments are optional method attributes, visibility, and a method name.
+/// Disabled variants are skipped. Discriminants and enum attributes are preserved.
+/// Empty enums have no cycle; their generated method is unreachable.
+/// Works in either attribute order with [`discriminated_str`] and [`enum_fn`].
+/// Tuple and struct variants, including empty payloads, are rejected.
+///
+/// ```
+/// use these_macros_should_be_illegal::enum_cycle;
+/// #[enum_cycle(pub next)]
+/// #[derive(Debug, PartialEq)]
+/// enum Phase { Start, Middle, End }
+/// const FIRST: Phase = Phase::End.next();
+/// assert_eq!(FIRST, Phase::Start);
+/// assert_eq!(Phase::Start.next().next().next(), Phase::Start);
+/// ```
+#[proc_macro_attribute]
+pub fn enum_cycle(arguments: TokenStream, item: TokenStream) -> TokenStream {
+    enum_fn::enum_cycle(arguments.into(), item.into()).into()
 }

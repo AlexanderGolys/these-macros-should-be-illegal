@@ -6,6 +6,9 @@ pub enum Action {
     InsertNewline,
 }
 #[automatically_derived]
+#[doc(hidden)]
+unsafe impl ::core::clone::TrivialClone for Action {}
+#[automatically_derived]
 impl ::core::clone::Clone for Action {
     #[inline]
     fn clone(&self) -> Action {
@@ -30,7 +33,7 @@ impl ::core::cmp::Eq for Action {
     #[inline]
     #[doc(hidden)]
     #[coverage(off)]
-    fn assert_receiver_is_total_eq(&self) -> () {}
+    fn assert_fields_are_eq(&self) {}
 }
 impl Action {
     #[allow(missing_docs)]

@@ -14,7 +14,7 @@
   - [Literal syntax and external modules](literal-syntax.md)
   - [Meta transformers](meta-transformers.md)
   - [`forward_attributes`](forward-attributes.md)
-  - [`macro_args`](macro-args.md)
+  - [Macro parameters](macro-args.md)
   - [`qf!`](qf.md)
   - [`stringify_as!`](stringification.md)
 - [How token rewriting behaves](token-rewriting.md)

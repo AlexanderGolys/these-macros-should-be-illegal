@@ -187,3 +187,22 @@ assert_eq!(Value::<String, 3>::Text(&text).size(), 5);
 assert_eq!(Value::<String, 3>::Bytes([1, 2, 3]).size(), 3);
 assert_eq!(Value::<String, 3>::Function(increment).size(), 3);
 ```
+
+## Cyclic successors with `enum_cycle`
+
+`#[enum_cycle(pub next)]` is a variation of `enum_fn` for unit enums. It
+creates a `pub const fn next(&self) -> Self` that advances in declaration
+order and wraps from the last variant to the first. Applying it N times
+returns the starting variant for an enum with N enabled variants.
+
+Method attributes and visibility precede the required method name, just as
+with `enum_fn`. The method is always constant and needs neither `Copy` nor
+`Clone`. Conditional variants are skipped, explicit discriminants are
+preserved, and a single variant maps to itself. Empty enums have no cycle.
+
+`enum_cycle` preserves variant right-hand sides, so it composes with ordinary
+numeric discriminants, `#[discriminated_str(label)]`, and
+`#[enum_fn(const code -> u8)]`. Either attribute order works. The successor
+always follows declaration order, independently of discriminant or mapping
+values. When combining mapping macros, each mapping macro retains its own
+input requirements.

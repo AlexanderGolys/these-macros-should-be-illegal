@@ -917,7 +917,7 @@ is preserved as written, without placeholder descriptions. The normal
 `missing_docs` lint applies. Enable `#[strutuct(allow_missing_docs)]`, or its
 short form `#[strutuct(undoc)]`, to add `#[allow(missing_docs)]` throughout a
 branch, including hoisted nested declarations. The same option is available
-through `#[macro_args(...)]` or a direct `@macro_args(...);` prefix.
+through a direct `@macro_args(...);` prefix.
 `no_allow_missing_docs` (`no_undoc`) stops inheriting this option in a branch;
 ordinary Rust lint inheritance within a declaration still applies. Constructor
 macros and inclusion functions retain descriptions of their behavior.

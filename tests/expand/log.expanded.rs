@@ -16,6 +16,10 @@ pub enum LogBaseGroups {
     Bg,
 }
 #[automatically_derived]
+#[doc(hidden)]
+#[allow(dead_code, non_camel_case_types)]
+unsafe impl ::core::clone::TrivialClone for LogBaseGroups {}
+#[automatically_derived]
 #[allow(dead_code, non_camel_case_types)]
 impl ::core::clone::Clone for LogBaseGroups {
     #[inline]
@@ -45,13 +49,13 @@ impl ::core::cmp::Eq for LogBaseGroups {
     #[inline]
     #[doc(hidden)]
     #[coverage(off)]
-    fn assert_receiver_is_total_eq(&self) -> () {}
+    fn assert_fields_are_eq(&self) {}
 }
 #[automatically_derived]
 #[allow(dead_code, non_camel_case_types)]
 impl ::core::hash::Hash for LogBaseGroups {
     #[inline]
-    fn hash<__H: ::core::hash::Hasher>(&self, state: &mut __H) -> () {
+    fn hash<__H: ::core::hash::Hasher>(&self, state: &mut __H) {
         let __self_discr = ::core::intrinsics::discriminant_value(self);
         ::core::hash::Hash::hash(&__self_discr, state)
     }
@@ -105,6 +109,10 @@ pub enum LogTheme {
     Function,
 }
 #[automatically_derived]
+#[doc(hidden)]
+#[allow(dead_code, non_camel_case_types)]
+unsafe impl ::core::clone::TrivialClone for LogTheme {}
+#[automatically_derived]
 #[allow(dead_code, non_camel_case_types)]
 impl ::core::clone::Clone for LogTheme {
     #[inline]
@@ -134,13 +142,13 @@ impl ::core::cmp::Eq for LogTheme {
     #[inline]
     #[doc(hidden)]
     #[coverage(off)]
-    fn assert_receiver_is_total_eq(&self) -> () {}
+    fn assert_fields_are_eq(&self) {}
 }
 #[automatically_derived]
 #[allow(dead_code, non_camel_case_types)]
 impl ::core::hash::Hash for LogTheme {
     #[inline]
-    fn hash<__H: ::core::hash::Hasher>(&self, state: &mut __H) -> () {
+    fn hash<__H: ::core::hash::Hasher>(&self, state: &mut __H) {
         let __self_discr = ::core::intrinsics::discriminant_value(self);
         ::core::hash::Hash::hash(&__self_discr, state)
     }
@@ -191,6 +199,10 @@ enum LogMixed {
     name,
 }
 #[automatically_derived]
+#[doc(hidden)]
+#[allow(dead_code, non_camel_case_types)]
+unsafe impl ::core::clone::TrivialClone for LogMixed {}
+#[automatically_derived]
 #[allow(dead_code, non_camel_case_types)]
 impl ::core::clone::Clone for LogMixed {
     #[inline]
@@ -220,13 +232,13 @@ impl ::core::cmp::Eq for LogMixed {
     #[inline]
     #[doc(hidden)]
     #[coverage(off)]
-    fn assert_receiver_is_total_eq(&self) -> () {}
+    fn assert_fields_are_eq(&self) {}
 }
 #[automatically_derived]
 #[allow(dead_code, non_camel_case_types)]
 impl ::core::hash::Hash for LogMixed {
     #[inline]
-    fn hash<__H: ::core::hash::Hasher>(&self, state: &mut __H) -> () {
+    fn hash<__H: ::core::hash::Hasher>(&self, state: &mut __H) {
         let __self_discr = ::core::intrinsics::discriminant_value(self);
         ::core::hash::Hash::hash(&__self_discr, state)
     }
@@ -249,6 +261,10 @@ struct Nothing;
 #[allow(dead_code, non_camel_case_types)]
 ///Field names of [`Nothing`].
 enum LogNothing {}
+#[automatically_derived]
+#[doc(hidden)]
+#[allow(dead_code, non_camel_case_types)]
+unsafe impl ::core::clone::TrivialClone for LogNothing {}
 #[automatically_derived]
 #[allow(dead_code, non_camel_case_types)]
 impl ::core::clone::Clone for LogNothing {
@@ -277,13 +293,13 @@ impl ::core::cmp::Eq for LogNothing {
     #[inline]
     #[doc(hidden)]
     #[coverage(off)]
-    fn assert_receiver_is_total_eq(&self) -> () {}
+    fn assert_fields_are_eq(&self) {}
 }
 #[automatically_derived]
 #[allow(dead_code, non_camel_case_types)]
 impl ::core::hash::Hash for LogNothing {
     #[inline]
-    fn hash<__H: ::core::hash::Hasher>(&self, state: &mut __H) -> () {
+    fn hash<__H: ::core::hash::Hasher>(&self, state: &mut __H) {
         match *self {}
     }
 }

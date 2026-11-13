@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.14.0 - 2026-11-13
+
+### Added
+
+- `#[enum_cycle(next)]` generates a constant successor method for unit enums,
+  wrapping in declaration order and skipping disabled variants. It preserves
+  discriminants and composes in either attribute order with `enum_fn` and
+  `discriminated_str`.
+
+### Removed
+
+- **Breaking:** The `#[macro_args(...)]` wrapper is removed. Use the inline
+  `@macro_args(...);` prefix inside function-like macro invocations instead.
+
 ## 0.13.0 - 2026-11-08
 
 ### Added
