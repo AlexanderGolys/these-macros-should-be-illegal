@@ -72,3 +72,18 @@ fn composes_with_variant_mappings_in_both_orders() {
     assert_eq!(CycleOutsideStrings::First.next().label(), "last");
     assert_eq!(StringsOutsideCycle::First.next().label(), "last");
 }
+
+#[enum_cycle(next)]
+#[derive(Debug, PartialEq)]
+enum Conditional {
+    #[cfg(all())]
+    First,
+    #[cfg_attr(all(), cfg(all()))]
+    Last,
+}
+
+#[test]
+fn cycles_when_every_variant_has_conditional_attributes() {
+    assert_eq!(Conditional::First.next(), Conditional::Last);
+    assert_eq!(Conditional::Last.next(), Conditional::First);
+}

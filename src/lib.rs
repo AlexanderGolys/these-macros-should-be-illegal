@@ -34,6 +34,7 @@ mod generate {
     pub(crate) mod callable;
     pub(crate) mod complete_ops;
     pub(crate) mod discriminated_str;
+    pub(crate) mod enum_cycle;
     pub(crate) mod enum_fn;
     pub(crate) mod forall;
     pub(crate) mod log;
@@ -43,6 +44,7 @@ mod generate {
 
 mod helpers {
     pub(crate) mod arguments;
+    pub(crate) mod enum_method;
     pub(crate) mod fresh_name;
     pub(crate) mod preprocessing;
     pub(crate) mod ungroup;
@@ -1145,5 +1147,5 @@ pub fn stringify_as(input: TokenStream) -> TokenStream {
 /// ```
 #[proc_macro_attribute]
 pub fn enum_cycle(arguments: TokenStream, item: TokenStream) -> TokenStream {
-    enum_fn::enum_cycle(arguments.into(), item.into()).into()
+    enum_cycle::enum_cycle(arguments.into(), item.into()).into()
 }

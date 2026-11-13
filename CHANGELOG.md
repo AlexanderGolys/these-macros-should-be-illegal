@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.14.2 - 2026-11-13
+
+### Changed
+
+- `enum_cycle` generates successor matches directly in its own module. Shared
+  enum method emission and conditional attributes live in a common helper;
+  successor generation no longer synthesizes discriminants or reparses output.
+  Public syntax and behavior are unchanged.
+
 ## 0.14.1 - 2026-11-13
 
 ### Changed

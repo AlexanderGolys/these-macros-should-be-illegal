@@ -77,14 +77,16 @@
 
 use proc_macro2::{Span, TokenStream};
 
-use crate::helpers::{fresh_name, ungroup};
+use crate::helpers::{
+    enum_method::{conditional_attrs, with_method},
+    fresh_name, ungroup,
+};
 use quote::quote;
 use syn::{
     Attribute, Error, Expr, ExprClosure, Fields, Ident, ItemEnum, Lifetime, Meta, Pat, PatType,
     Token, Type, Variant, Visibility,
     parse::{Parse, ParseStream},
     parse_quote_spanned, parse2,
-    punctuated::Punctuated,
     spanned::Spanned,
     visit_mut::{self, VisitMut},
 };
@@ -311,8 +313,6 @@ fn expand(arguments: Arguments, mut item: ItemEnum) -> syn::Result<TokenStream> 
         outputs.push(output);
     }
 
-    let ident = &item.ident;
-    let (impl_generics, type_generics, where_clause) = item.generics.split_for_impl();
     if is_const.is_some() && has_lambda {
         return Err(Error::new_spanned(
             &method,
@@ -362,14 +362,7 @@ fn expand(arguments: Arguments, mut item: ItemEnum) -> syn::Result<TokenStream> 
         }
     };
 
-    let impl_attrs = conditional_attrs(&item.attrs);
-    Ok(quote! {
-        #item
-        #(#impl_attrs)*
-        impl #impl_generics #ident #type_generics #where_clause {
-            #method
-        }
-    })
+    Ok(with_method(&item, parse2(method)?))
 }
 
 /// Checks that a mapping lambda describes exactly the variant's product.
@@ -680,76 +673,6 @@ impl VisitMut for BorrowedReturn<'_> {
     }
 }
 
-/// Retains only conditional compilation, including nested `cfg_attr` conditions.
-///
-/// - `#[cfg(test)] #[derive(Debug)] #[doc = "..."]` keeps `#[cfg(test)]`.
-/// - `#[cfg_attr(unix, cfg(test), derive(Debug))] #[repr(u8)]` keeps
-///   `#[cfg_attr(unix, cfg(test))]`.
-///
-/// ```rust,ignore
-/// #[enum_fn(code -> u8, missing = 0)]
-/// enum Flag {
-///     #[cfg_attr(unix, doc = "Documented only on Unix.")]
-///     Shown = 1,
-///     #[cfg_attr(not(test), cfg(test))]
-///     Hidden = 2,
-/// }
-/// assert_eq!(Flag::Shown.code(), 1);
-/// ```
-fn conditional_attrs(attrs: &[Attribute]) -> Vec<Attribute> {
-    attrs
-        .iter()
-        .filter_map(|attribute| {
-            let meta = conditional_meta(&attribute.meta)?;
-            Some(parse_quote_spanned!(attribute.span()=> #[#meta]))
-        })
-        .collect()
-}
-
-/// Removes variant-only metadata from a conditional attribute before forwarding it.
-///
-/// Returns `None` when nothing conditional remains to forward:
-///
-/// - `cfg(test)` stays `cfg(test)`.
-/// - `cfg_attr(unix, derive(Debug), cfg(test))` becomes `cfg_attr(unix, cfg(test))`.
-/// - `cfg_attr(unix, cfg_attr(test, cfg(debug_assertions)), doc = "...")` becomes
-///   `cfg_attr(unix, cfg_attr(test, cfg(debug_assertions)))`.
-/// - `cfg_attr(unix, derive(Debug))` and `derive(Debug)` are dropped.
-///
-/// ```rust,ignore
-/// #[enum_fn(code -> u8, missing = 0)]
-/// enum Mode {
-///     #[cfg_attr(unix, cfg_attr(not(test), cfg(test)), doc = "Unix-only docs.")]
-///     Debug = 1,
-///     Release = 2,
-/// }
-/// assert_eq!(Mode::Release.code(), 2);
-/// ```
-fn conditional_meta(meta: &Meta) -> Option<Meta> {
-    if meta.path().is_ident("cfg") {
-        return Some(meta.clone());
-    }
-    let Meta::List(list) = meta else {
-        return None;
-    };
-    if !list.path.is_ident("cfg_attr") {
-        return None;
-    }
-    let arguments = list
-        .parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
-        .ok()?;
-    let mut arguments = arguments.iter();
-    let condition = arguments.next()?;
-    let attributes: Vec<_> = arguments.filter_map(conditional_meta).collect();
-    if attributes.is_empty() {
-        return None;
-    }
-    let mut filtered = list.clone();
-    filtered.tokens = quote!(#condition, #(#attributes),*);
-    Some(Meta::List(filtered))
-}
-
-/// Parser and diagnostic tests that do not require a downstream crate.
 #[cfg(test)]
 mod tests {
     use quote::quote;
@@ -969,111 +892,5 @@ mod tests {
         assert!(const_public.contains("pub (crate) const fn value"));
         assert!(constant.contains("const fn value"));
         assert!(private.contains("] fn value"));
-    }
-}
-
-/// Generates a constant successor method using the enum accessor machinery.
-pub fn enum_cycle(arguments: TokenStream, item: TokenStream) -> TokenStream {
-    let result = (|| -> syn::Result<TokenStream> {
-        let original = parse2::<ItemEnum>(item)?;
-        let mut mapped = original.clone();
-        for (index, variant) in mapped.variants.iter_mut().enumerate() {
-            if !matches!(variant.fields, Fields::Unit) {
-                return Err(Error::new_spanned(
-                    &variant.fields,
-                    "enum_cycle requires unit variants",
-                ));
-            }
-            let successors = original
-                .variants
-                .iter()
-                .cycle()
-                .skip(index + 1)
-                .take(original.variants.len())
-                .map(|candidate| {
-                    let attributes = conditional_attrs(&candidate.attrs);
-                    let name = &candidate.ident;
-                    quote!(#(#attributes)* { return Self::#name; })
-                });
-            variant.discriminant = Some((
-                Default::default(),
-                syn::parse_quote!({
-                    #[allow(unreachable_code)]
-                    { #(#successors)* ::core::panic!("no enabled successor") }
-                }),
-            ));
-        }
-        let arguments = parse2::<CycleArguments>(arguments)?;
-        let CycleArguments {
-            attributes,
-            visibility,
-            name,
-        } = arguments;
-        let expanded = enum_fn(
-            quote!(#(#attributes)* #visibility const #name -> Self),
-            quote!(#mapped),
-        );
-        let mut file = parse2::<syn::File>(expanded)?;
-        file.items[0] = syn::Item::Enum(original);
-        Ok(quote!(#file))
-    })();
-    result.unwrap_or_else(Error::into_compile_error)
-}
-
-struct CycleArguments {
-    attributes: Vec<Attribute>,
-    visibility: Visibility,
-    name: Ident,
-}
-
-impl Parse for CycleArguments {
-    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
-        let arguments = Self {
-            attributes: input.call(Attribute::parse_outer)?,
-            visibility: input.parse()?,
-            name: input.parse()?,
-        };
-        if input.peek(Token![,]) {
-            input.parse::<Token![,]>()?;
-        }
-        Ok(arguments)
-    }
-}
-
-#[cfg(test)]
-mod cycle_tests {
-    use super::enum_cycle;
-    use quote::quote;
-
-    #[test]
-    fn rejects_payload_variants() {
-        for item in [
-            quote!(
-                enum Invalid {
-                    Tuple(u8),
-                }
-            ),
-            quote!(
-                enum Invalid {
-                    Named { value: u8 },
-                }
-            ),
-            quote!(
-                enum Invalid {
-                    EmptyTuple(),
-                }
-            ),
-            quote!(
-                enum Invalid {
-                    EmptyStruct {},
-                }
-            ),
-        ] {
-            let output = enum_cycle(quote!(next), item).to_string();
-            assert!(
-                output.contains("enum_cycle requires unit variants"),
-                "{output}"
-            );
-        }
     }
 }
